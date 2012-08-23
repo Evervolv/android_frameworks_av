@@ -30,6 +30,10 @@
 #include <gui/Surface.h>
 #include <utils/String8.h>
 #include <cutils/properties.h>
+#ifdef QCOM_HARDWARE
+#include "include/QCUtilityClass.h"
+#include <QCMetaData.h>
+#endif
 
 namespace android {
 
@@ -561,6 +565,11 @@ status_t CameraSource::initWithCameraAccess(
     mMeta->setInt32(kKeyStride,      mVideoSize.width);
     mMeta->setInt32(kKeySliceHeight, mVideoSize.height);
     mMeta->setInt32(kKeyFrameRate,   mVideoFrameRate);
+
+#ifdef QCOM_HARDWARE
+    QCUtilityClass::helper_CameraSource_hfr(params, mMeta);
+#endif
+
     return OK;
 }
 
