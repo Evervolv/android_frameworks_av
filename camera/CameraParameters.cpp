@@ -584,11 +584,6 @@ static void parseSizesList(const char *sizesStr, Vector<Size> &sizes)
     }
 }
 
-void CameraParameters::setPostviewSize(int width, int height)
-{
-    // dummy
-}
-
 void CameraParameters::setPreviewSize(int width, int height)
 {
     char str[32];
@@ -620,6 +615,11 @@ void CameraParameters::getSupportedPreviewSizes(Vector<Size> &sizes) const
 }
 
 #ifdef QCOM_HARDWARE
+void CameraParameters::setPostviewSize(int width, int height)
+{
+    // dummy
+}
+
 void CameraParameters::getSupportedHfrSizes(Vector<Size> &sizes) const
 {
     const char *hfrSizesStr = get(KEY_SUPPORTED_HFR_SIZES);
