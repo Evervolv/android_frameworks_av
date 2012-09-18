@@ -25,6 +25,9 @@ ifeq ($(TARGET_BOARD_PLATFORM),msm7k)
 	LOCAL_CFLAGS += -DQCOM_HARDWARE
 endif
 
+ifeq ($(BOARD_CAMERA_HAVE_ISO),true)
+	LOCAL_CFLAGS += -DHAVE_ISO
+endif
 
 LOCAL_MODULE:= libcamera_client
 
