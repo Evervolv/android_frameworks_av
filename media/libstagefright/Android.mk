@@ -160,6 +160,16 @@ ifeq ($(BOARD_USES_QCOM_HARDWARE),true)
     endif
 endif
 
+ifeq ($(BOARD_USE_OLD_AVC_ENCODER),true)
+LOCAL_STATIC_LIBRARIES += \
+        libstagefright_avcenc
+LOCAL_CFLAGS += -DOLD_AVC_ENCODER
+endif
+
+ifeq ($(BOARD_NO_BFRAMES),true)
+LOCAL_CFLAGS += -DNO_BFRAMES
+endif
+
 ifeq ($(filter-out exynos4 exynos5,$(TARGET_BOARD_PLATFORM)),)
 LOCAL_CFLAGS += -DSAMSUNG_ANDROID_PATCH
 endif

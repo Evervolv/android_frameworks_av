@@ -1980,6 +1980,7 @@ status_t MPEG4Writer::Track::threadEntry() {
 
         timestampUs -= previousPausedDurationUs;
         CHECK_GE(timestampUs, 0ll);
+#ifndef NO_BFRAMES
         if (!mIsAudio) {
             /*
              * Composition time: timestampUs
@@ -2030,6 +2031,7 @@ status_t MPEG4Writer::Track::threadEntry() {
             }
 
         }
+#endif
 
         if (mIsRealTimeRecording) {
             if (mIsAudio) {
@@ -2168,6 +2170,7 @@ status_t MPEG4Writer::Track::threadEntry() {
         addOneSttsTableEntry(sampleCount, lastDurationTicks);
     }
 
+#ifndef NO_BFRAMES
     // The last ctts box may not have been written yet, and this
     // is to make sure that we write out the last ctts box.
     if (currCttsOffsetTimeTicks == lastCttsOffsetTimeTicks) {
@@ -2175,6 +2178,7 @@ status_t MPEG4Writer::Track::threadEntry() {
             addOneCttsTableEntry(cttsSampleCount, lastCttsOffsetTimeTicks);
         }
     }
+#endif
 
     mTrackDurationUs += lastDurationUs;
     mReachedEOS = true;
