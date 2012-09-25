@@ -61,7 +61,9 @@ MediaCodecList::MediaCodecList()
         // These are currently still used by the video editing suite.
 
         addMediaCodec(true /* encoder */, "AACEncoder", "audio/mp4a-latm");
-
+#ifdef OLD_AVC_ENCODER
+        addMediaCodec(true /* encoder */, "AVCEncoder", "video/avc");
+#endif
         addMediaCodec(
                 false /* encoder */, "OMX.google.raw.decoder", "audio/raw");
     }

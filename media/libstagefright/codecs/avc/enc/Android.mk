@@ -18,6 +18,10 @@ LOCAL_SRC_FILES := \
     src/slice.cpp \
     src/vlc_encode.cpp
 
+ifeq ($(BOARD_USE_OLD_AVC_ENCODER),true)
+LOCAL_SRC_FILES += \
+    AVCEncoder.cpp
+endif
 
 LOCAL_MODULE := libstagefright_avcenc
 
@@ -34,6 +38,7 @@ include $(BUILD_STATIC_LIBRARY)
 
 ################################################################################
 
+ifneq ($(BOARD_USE_OLD_AVC_ENCODER),true)
 include $(CLEAR_VARS)
 
 LOCAL_SRC_FILES := \
@@ -69,3 +74,4 @@ LOCAL_MODULE := libstagefright_soft_h264enc
 LOCAL_MODULE_TAGS := optional
 
 include $(BUILD_SHARED_LIBRARY)
+endif

@@ -23,6 +23,10 @@ LOCAL_SHARED_LIBRARIES :=               \
         libstagefright_foundation       \
         libdl
 
+ifeq ($(BOARD_USE_OLD_AVC_ENCODER),true)
+LOCAL_CFLAGS += -DOLD_AVC_ENCODER
+endif
+
 LOCAL_MODULE:= libstagefright_omx
 
 include $(BUILD_SHARED_LIBRARY)
