@@ -40,6 +40,10 @@ LOCAL_C_INCLUDES += \
     system/media/camera/include \
     external/jpeg
 
+ifeq ($(BOARD_HTC_3D_SUPPORT),true)
+   LOCAL_CFLAGS += -DHTC_3D_SUPPORT
+endif
+
 LOCAL_MODULE:= libcameraservice
 
 include $(BUILD_SHARED_LIBRARY)
