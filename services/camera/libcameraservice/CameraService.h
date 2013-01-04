@@ -137,6 +137,7 @@ public:
         int                             mCameraFacing;   // immutable after constructor
         pid_t                           mClientPid;
         pid_t                           mServicePid;     // immutable after constructor
+        int                             mBurstCnt;
 
     };
 
