@@ -27,6 +27,11 @@ static Mutex sMutex;
 
 int requestPriority(pid_t pid, pid_t tid, int32_t prio)
 {
+    /* We don't yet have a native service with permission to change the
+     * scheduling policy for processess and threads, so let's just return
+     * with an error here (Android's Scheduling Policy service is JAVA based */
+    return -1;
+
     // FIXME merge duplicated code related to service lookup, caching, and error recovery
     sp<ISchedulingPolicyService> sps;
     for (;;) {
