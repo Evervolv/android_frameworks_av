@@ -1,13 +1,6 @@
 LOCAL_PATH:= $(call my-dir)
 include $(CLEAR_VARS)
 
-ifeq ($(BOARD_USES_ALSA_AUDIO),true)
-    ifeq ($(call is-chipset-in-board-platform,msm8960),true)
-        LOCAL_CFLAGS += -DUSE_TUNNEL_MODE
-        LOCAL_CFLAGS += -DTUNNEL_MODE_SUPPORTS_AMRWB
-    endif
-endif
-
 include frameworks/av/media/libstagefright/codecs/common/Config.mk
 
 ifeq ($(BOARD_HTC_3D_SUPPORT),true)
@@ -88,10 +81,17 @@ LOCAL_C_INCLUDES += \
         $(TOP)/hardware/qcom/media/mm-core/inc
 
 ifeq ($(TARGET_QCOM_AUDIO_VARIANT),caf)
-LOCAL_CFLAGS += -DQCOM_ENHANCED_AUDIO
-LOCAL_SRC_FILES += \
-        LPAPlayerALSA.cpp                 \
-        TunnelPlayer.cpp
+    ifeq ($(filter msm8660 msm7x27a msm7x30,$(TARGET_BOARD_PLATFORM)),)
+        LOCAL_SRC_FILES += LPAPlayer.cpp
+    else
+        LOCAL_SRC_FILES += LPAPlayerALSA.cpp
+    endif
+    ifeq ($(BOARD_USES_ALSA_AUDIO),true)
+        ifeq ($(TARGET_BOARD_PLATFORM),msm8960)
+            LOCAL_CFLAGS += -DUSE_TUNNEL_MODE
+            LOCAL_CFLAGS += -DTUNNEL_MODE_SUPPORTS_AMRWB
+        endif
+    endif
 endif
 endif
 
