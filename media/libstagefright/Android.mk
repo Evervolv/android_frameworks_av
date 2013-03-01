@@ -81,17 +81,19 @@ LOCAL_C_INCLUDES += \
         $(TOP)/hardware/qcom/media/mm-core/inc
 
 ifeq ($(TARGET_QCOM_AUDIO_VARIANT),caf)
-    ifeq ($(filter msm8660 msm7x27a msm7x30,$(TARGET_BOARD_PLATFORM)),)
+    ifeq ($(call is-board-platform-in-list,msm8660 msm7x27a msm7x30),true)
         LOCAL_SRC_FILES += LPAPlayer.cpp
     else
         LOCAL_SRC_FILES += LPAPlayerALSA.cpp
     endif
     ifeq ($(BOARD_USES_ALSA_AUDIO),true)
-        ifeq ($(TARGET_BOARD_PLATFORM),msm8960)
+        ifeq ($(call is-chipset-in-board-platform,msm8960),true)
             LOCAL_CFLAGS += -DUSE_TUNNEL_MODE
             LOCAL_CFLAGS += -DTUNNEL_MODE_SUPPORTS_AMRWB
         endif
     endif
+LOCAL_CFLAGS += -DQCOM_ENHANCED_AUDIO
+LOCAL_SRC_FILES += TunnelPlayer.cpp
 endif
 endif
 

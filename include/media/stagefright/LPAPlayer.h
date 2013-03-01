@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2009 The Android Open Source Project
- * Copyright (c) 2009-2012, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2009-2013, The Linux Foundation. All rights reserved.
  * Not a Contribution, Apache license notifications and license are retained
  * for attribution purposes only.
  *
@@ -82,6 +82,7 @@ public:
     virtual bool reachedEOS(status_t *finalStatus);
 
     static int objectsAlive;
+    static bool mLpaInProgress;
 private:
     int64_t mPositionTimeMediaUs;
     int64_t mPositionTimeRealUs;
@@ -92,6 +93,8 @@ private:
     bool mA2DPEnabled;
     int32_t mChannelMask;
     int32_t numChannels;
+    int32_t mNumOutputChannels;
+    int32_t mNumInputChannels;
     int32_t mSampleRate;
     int64_t mLatencyUs;
     size_t mFrameSize;
@@ -257,6 +260,9 @@ private:
         MediaPlayerBase::AudioSink *audioSink,
         void *buffer, size_t size, void *cookie);
     size_t AudioCallback(void *cookie, void *data, size_t size);
+    int64_t getMediaTimeUs_l();
+
+    void convertMonoToStereo(int16_t *data, size_t size);
 
     LPAPlayer(const LPAPlayer &);
     LPAPlayer &operator=(const LPAPlayer &);
