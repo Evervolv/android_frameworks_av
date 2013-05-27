@@ -53,10 +53,12 @@ const char CameraParameters::CAPTURE_MODE_PANORAMA[] = "panorama";
 const char CameraParameters::CONTINUOUS_AF_OFF[] = "caf-off";
 const char CameraParameters::CONTINUOUS_AF_ON[] = "caf-on";
 const char CameraParameters::KEY_CONTINUOUS_AF[] = "continuous-af";
+const char CameraParameters::KEY_CAF[] = "continuous-af";
 const char CameraParameters::KEY_CAPTURE_MODE[] = "capture-mode";
 const char CameraParameters::KEY_PICTURE_COUNT[] = "picture-count";
 const char CameraParameters::KEY_MAX_BURST_PICTURE_COUNT[] = "max-burst-picture-count";
 const char CameraParameters::KEY_SUPPORTED_CONTINUOUS_AF[] = "continuous-af-mode";
+const char CameraParameters::KEY_SUPPORTED_CAF[] = "continuous-af-values";
 const char CameraParameters::KEY_SUPPORTED_CAPTURE_MODES[] = "capture-mode-values";
 const char CameraParameters::KEY_TAKING_PICTURE_ZOOM[] = "taking-picture-zoom";
 const char CameraParameters::KEY_PANORAMA_MODE[] = "panorama-mode";
@@ -429,6 +431,28 @@ const char CameraParameters::AE_BRACKET[] = "AE-Bracket";
 
 const char CameraParameters::LOW_POWER[] = "Low_Power";
 const char CameraParameters::NORMAL_POWER[] = "Normal_Power";
+
+#if defined(QCOM_HARDWARE) && defined(SAMSUNG_CAMERA_LEGACY)
+const char CameraParameters::FOCUS_MODE_FACEDETECT[] = "facedetect";
+const char CameraParameters::FOCUS_MODE_TOUCHAF[] = "touchaf";
+const char CameraParameters::ISO_50[] = "ISO50";
+const char CameraParameters::KEY_ANTI_SHAKE_MODE[] = "antishake";
+const char CameraParameters::KEY_AUTO_CONTRAST[] = "auto-contrast";
+const char CameraParameters::KEY_BEAUTY_MODE[] = "beauty";
+const char CameraParameters::KEY_BLUR_MODE[] = "blur";
+const char CameraParameters::KEY_VINTAGE_MODE[] = "vintagemode";
+const char CameraParameters::KEY_WDR_MODE[] = "wdr";
+const char CameraParameters::VINTAGE_MODE_BNW[] = "bnw";
+const char CameraParameters::VINTAGE_MODE_COOL[] = "cool";
+const char CameraParameters::VINTAGE_MODE_NORMAL[] = "normal";
+const char CameraParameters::VINTAGE_MODE_OFF[] = "off";
+const char CameraParameters::VINTAGE_MODE_WARM[] = "warm";
+const char CameraParameters::SCENE_MODE_DAWN[] = "dusk-dawn";
+const char CameraParameters::SCENE_MODE_DUSKDAWN[] = "dusk-dawn";
+const char CameraParameters::SCENE_MODE_FALL[] = "fall-color";
+const char CameraParameters::SCENE_MODE_FALL_COLOR[] = "fall-color";
+const char CameraParameters::SCENE_MODE_TEXT[] = "text";
+#endif
 
 static const char* portrait = "portrait";
 static const char* landscape = "landscape";
