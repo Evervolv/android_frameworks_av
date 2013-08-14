@@ -105,6 +105,8 @@ struct OMXCodec : public MediaSource,
         kOutputBuffersAreUnreadable           = 4096,
 #if defined(OMAP_ENHANCEMENT)
         kAvoidMemcopyInputRecordingFrames     = 0x20000000,
+#else
+        kAvoidMemcopyInputRecordingFrames     = 8192,
 #endif
 #ifdef QCOM_HARDWARE
         kRequiresGlobalFlush                  = 0x20000000, // 2^29
