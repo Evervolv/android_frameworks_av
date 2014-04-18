@@ -42,4 +42,8 @@ LOCAL_INIT_RC := mediaserver.rc
 
 LOCAL_CFLAGS := -Werror -Wall
 
+ifneq ($(BOARD_NUMBER_OF_CAMERAS),)
+    LOCAL_CFLAGS += -DMAX_CAMERAS=$(BOARD_NUMBER_OF_CAMERAS)
+endif
+
 include $(BUILD_EXECUTABLE)
