@@ -18,7 +18,9 @@
 
 //#define LOG_NDEBUG 0
 #define LOG_TAG "AudioPlayer"
+#define ATRACE_TAG ATRACE_TAG_AUDIO
 #include <utils/Log.h>
+#include <utils/Trace.h>
 #include <cutils/compiler.h>
 
 #include <binder/IPCThreadState.h>
@@ -31,6 +33,10 @@
 #include <media/stagefright/MediaSource.h>
 #include <media/stagefright/MetaData.h>
 #include <media/stagefright/Utils.h>
+
+#ifdef QCOM_HARDWARE
+#include <media/stagefright/ExtendedCodec.h>
+#endif
 
 #include "include/AwesomePlayer.h"
 
@@ -52,9 +58,7 @@ AudioPlayer::AudioPlayer(
       mFinalStatus(OK),
       mSeekTimeUs(0),
       mStarted(false),
-#ifdef QCOM_HARDWARE
       mSourcePaused(false),
-#endif
       mIsFirstBuffer(false),
       mFirstBufferResult(OK),
       mFirstBuffer(NULL),
@@ -63,7 +67,9 @@ AudioPlayer::AudioPlayer(
       mPinnedTimeUs(-1ll),
       mPlaying(false),
       mStartPosUs(0),
-      mCreateFlags(flags) {
+      mCreateFlags(flags),
+      mPauseRequired(false)
+      {
 }
 
 AudioPlayer::~AudioPlayer() {
@@ -83,9 +89,7 @@ status_t AudioPlayer::start(bool sourceAlreadyStarted) {
 
     status_t err;
     if (!sourceAlreadyStarted) {
-#ifdef QCOM_HARDWARE
         mSourcePaused = false;
-#endif
         err = mSource->start();
 
         if (err != OK) {
@@ -144,6 +148,12 @@ status_t AudioPlayer::start(bool sourceAlreadyStarted) {
             ALOGE("Couldn't map mime type \"%s\" to a valid AudioSystem::audio_format", mime);
             audioFormat = AUDIO_FORMAT_INVALID;
         } else {
+#ifdef QCOM_HARDWARE
+            // Override audio format for PCM offload
+            if (audioFormat == AUDIO_FORMAT_PCM_16_BIT) {
+                audioFormat = AUDIO_FORMAT_PCM_16_BIT_OFFLOAD;
+            }
+#endif
             ALOGV("Mime type \"%s\" mapped to audio_format 0x%x", mime, audioFormat);
         }
     }
@@ -254,6 +264,15 @@ status_t AudioPlayer::start(bool sourceAlreadyStarted) {
     mStarted = true;
     mPlaying = true;
     mPinnedTimeUs = -1ll;
+    const char *componentName;
+    if (!(format->findCString(kKeyDecoderComponent, &componentName))) {
+          componentName = "none";
+    }
+    if (!strncmp(componentName, "OMX.qcom.", 9)) {
+        mPauseRequired = true;
+    } else {
+        mPauseRequired = false;
+    }
 
     return OK;
 }
@@ -280,23 +299,21 @@ void AudioPlayer::pause(bool playPendingSamples) {
     }
 
     mPlaying = false;
-#ifdef QCOM_HARDWARE
     CHECK(mSource != NULL);
-    if (mSource->pause() == OK) {
-        mSourcePaused = true;
+    if (mPauseRequired) {
+        if (mSource->pause() == OK) {
+            mSourcePaused = true;
+        }
     }
-#endif
 }
 
 status_t AudioPlayer::resume() {
     CHECK(mStarted);
-#ifdef QCOM_HARDWARE
     CHECK(mSource != NULL);
     if (mSourcePaused == true) {
         mSourcePaused = false;
         mSource->start();
     }
-#endif
     status_t err;
 
     if (mAudioSink.get() != NULL) {
@@ -358,9 +375,8 @@ void AudioPlayer::reset() {
         mInputBuffer->release();
         mInputBuffer = NULL;
     }
-#ifdef QCOM_HARDWARE
+
     mSourcePaused = false;
-#endif
     mSource->stop();
 
     // The following hack is necessary to ensure that the OMX
@@ -368,7 +384,11 @@ void AudioPlayer::reset() {
     // to instantiate it again.
     // When offloading, the OMX component is not used so this hack
     // is not needed
-    if (!useOffload()) {
+    sp<MetaData> format = mSource->getFormat();
+    const char *mime;
+    format->findCString(kKeyMIMEType, &mime);
+    if (!useOffload() ||
+        (useOffload() && !strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_RAW))) {
         wp<MediaSource> tmp = mSource;
         mSource.clear();
         while (tmp.promote() != NULL) {
@@ -390,6 +410,7 @@ void AudioPlayer::reset() {
     mStarted = false;
     mPlaying = false;
     mStartPosUs = 0;
+    mPauseRequired = false;
 }
 
 // static
@@ -436,7 +457,7 @@ size_t AudioPlayer::AudioSinkCallback(
         MediaPlayerBase::AudioSink::cb_event_t event) {
     AudioPlayer *me = (AudioPlayer *)cookie;
 
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
     if (buffer == NULL) {
         //Not applicable for AudioPlayer
         ALOGE("This indicates the event underrun case for LPA/Tunnel");
@@ -500,6 +521,7 @@ uint32_t AudioPlayer::getNumFramesPendingPlayout() const {
 }
 
 size_t AudioPlayer::fillBuffer(void *data, size_t size) {
+    ATRACE_CALL();
     if (mNumFramesPlayed == 0) {
         ALOGV("AudioCallback");
     }
@@ -555,7 +577,23 @@ size_t AudioPlayer::fillBuffer(void *data, size_t size) {
 
                 mIsFirstBuffer = false;
             } else {
-                err = mSource->read(&mInputBuffer, &options);
+                if(!mSourcePaused) {
+                    err = mSource->read(&mInputBuffer, &options);
+                    if (err == OK && mInputBuffer == NULL && mSourcePaused) {
+                        ALOGV("mSourcePaused, return 0 from fillBuffer");
+                        return 0;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            if(err == -EAGAIN) {
+                if(mSourcePaused){
+                    break;
+                } else {
+                    continue;
+                }
             }
 
             CHECK((err == OK && mInputBuffer != NULL)
@@ -566,6 +604,20 @@ size_t AudioPlayer::fillBuffer(void *data, size_t size) {
             if (err != OK) {
                 if (!mReachedEOS) {
                     if (useOffload()) {
+                        // After seek there is a possible race condition if
+                        // OffloadThread is observing state_stopping_1 before
+                        // framesReady() > 0. Ensure sink stop is called
+                        // after last buffer is released. This ensures the
+                        // partial buffer is written to the driver before
+                        // stopping one is observed.The drawback is that
+                        // there will be an unnecessary call to the parser
+                        // after parser signalled EOS.
+                        if (size_done > 0) {
+                             ALOGW("send Partial buffer down\n");
+                             ALOGW("skip calling stop till next fillBuffer\n");
+                             break;
+                        }
+
                         // no more buffers to push - stop() and wait for STREAM_END
                         // don't set mReachedEOS until stream end received
                         if (mAudioSink != NULL) {
@@ -754,22 +806,33 @@ int64_t AudioPlayer::getRealTimeUsLocked() const {
 
     diffUs -= mNumFramesPlayedSysTimeUs;
 
-    if(result + diffUs <= mPositionTimeRealUs)
+    if((result + diffUs <= mPositionTimeRealUs) || (!mReachedEOS))
         return result + diffUs;
     else
         return mPositionTimeRealUs;
 }
 
-int64_t AudioPlayer::getOutputPlayPositionUs_l() const
+int64_t AudioPlayer::getOutputPlayPositionUs_l()
 {
     uint32_t playedSamples = 0;
+    uint32_t sampleRate;
     if (mAudioSink != NULL) {
         mAudioSink->getPosition(&playedSamples);
+        sampleRate = mAudioSink->getSampleRate();
     } else {
         mAudioTrack->getPosition(&playedSamples);
+        sampleRate = mAudioTrack->getSampleRate();
+    }
+    if (sampleRate != 0) {
+        mSampleRate = sampleRate;
     }
 
-    const int64_t playedUs = (static_cast<int64_t>(playedSamples) * 1000000 ) / mSampleRate;
+    int64_t playedUs;
+    if (mSampleRate != 0) {
+        playedUs = (static_cast<int64_t>(playedSamples) * 1000000 ) / mSampleRate;
+    } else {
+        playedUs = 0;
+    }
 
     // HAL position is relative to the first buffer we sent at mStartPosUs
     const int64_t renderedDuration = mStartPosUs + playedUs;

@@ -483,7 +483,14 @@ void StagefrightMetadataRetriever::parseMetaData() {
         const char *value;
         if (meta->findCString(kMap[i].from, &value)) {
             mMetaData.add(kMap[i].to, String8(value));
+            continue;
         }
+        //For some wma clips, Artist info exists in Author bytes instead of Artist byte
+        //Put the Author into Artist in this case
+        if((kMap[i].from == kKeyArtist) &&
+                meta->findCString(kKeyAuthor, &value))
+            mMetaData.add(kMap[i].to, String8(value));
+
     }
 
     const void *data;
@@ -542,9 +549,13 @@ void StagefrightMetadataRetriever::parseMetaData() {
                 }
             } else if (!strcasecmp(mime, MEDIA_MIMETYPE_TEXT_3GPP)) {
                 const char *lang;
-                trackMeta->findCString(kKeyMediaLanguage, &lang);
-                timedTextLang.append(String8(lang));
-                timedTextLang.append(String8(":"));
+                bool success = trackMeta->findCString(kKeyMediaLanguage, &lang);
+                if (success) {
+                    timedTextLang.append(String8(lang));
+                    timedTextLang.append(String8(":"));
+                } else {
+                    ALOGE("No language found for timed text");
+                }
             }
         }
     }

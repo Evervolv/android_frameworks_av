@@ -1,4 +1,7 @@
 /*
+ * Copyright (c) 2013, The Linux Foundation. All rights reserved.
+ * Not a Contribution.
+ *
  * Copyright (C) 2009 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -310,6 +313,10 @@ static const char *FourCC2MIME(uint32_t fourcc) {
     switch (fourcc) {
         case FOURCC('m', 'p', '4', 'a'):
             return MEDIA_MIMETYPE_AUDIO_AAC;
+
+        case FOURCC('e', 'n', 'c', 'a'):
+            return MEDIA_MIMETYPE_AUDIO_AAC;
+
 #ifdef QCOM_HARDWARE
         case FOURCC('.', 'm', 'p', '3'):
             return MEDIA_MIMETYPE_AUDIO_MPEG;
@@ -322,6 +329,9 @@ static const char *FourCC2MIME(uint32_t fourcc) {
             return MEDIA_MIMETYPE_AUDIO_AMR_WB;
 
         case FOURCC('m', 'p', '4', 'v'):
+            return MEDIA_MIMETYPE_VIDEO_MPEG4;
+
+        case FOURCC('e', 'n', 'c', 'v'):
             return MEDIA_MIMETYPE_VIDEO_MPEG4;
 
         case FOURCC('s', '2', '6', '3'):
@@ -2322,6 +2332,10 @@ status_t MPEG4Extractor::verifyTrack(Track *track) {
 status_t MPEG4Extractor::updateAudioTrackInfoFromESDS_MPEG4Audio(
         const void *esds_data, size_t esds_size) {
     ESDS esds(esds_data, esds_size);
+    static uint32_t kSamplingRate[] = {
+        96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050,
+        16000, 12000, 11025, 8000, 7350
+    };
 
     uint8_t objectTypeIndication;
     if (esds.getObjectTypeIndication(&objectTypeIndication) != OK) {
@@ -2389,10 +2403,21 @@ status_t MPEG4Extractor::updateAudioTrackInfoFromESDS_MPEG4Audio(
         objectType = 32 + br.getBits(6);
     }
 
+    if(objectType == 1) { //AAC Main profile
+        ALOGD("\n >>> Found AAC mainprofile in MPEG4 Extractor... \n");
+    }
+
+    mLastTrack->meta->setInt32(kKeyAACProfile, objectType);
+
+    //keep AOT type
+    mLastTrack->meta->setInt32(kKeyAACAOT, objectType);
+
     uint32_t freqIndex = br.getBits(4);
 
     int32_t sampleRate = 0;
+    int32_t extSampleRate = 0;
     int32_t numChannels = 0;
+
     if (freqIndex == 15) {
         if (csd_size < 5) {
             return ERROR_MALFORMED;
@@ -2400,30 +2425,28 @@ status_t MPEG4Extractor::updateAudioTrackInfoFromESDS_MPEG4Audio(
         sampleRate = br.getBits(24);
         numChannels = br.getBits(4);
     } else {
-        numChannels = br.getBits(4);
-        if (objectType == 5) {
-            // SBR specific config per 14496-3 table 1.13
-            freqIndex = br.getBits(4);
-            if (freqIndex == 15) {
-                if (csd_size < 8) {
-                    return ERROR_MALFORMED;
-                }
-                sampleRate = br.getBits(24);
-            }
+        if (freqIndex == 13 || freqIndex == 14) {
+            return ERROR_MALFORMED;
         }
+        numChannels = br.getBits(4);
+        sampleRate = kSamplingRate[freqIndex];
+    }
+    if (objectType == 5 || objectType == 29) {
+        // SBR specific config per 14496-3 table 1.13
+        freqIndex = br.getBits(4);
 
-        if (sampleRate == 0) {
-            static uint32_t kSamplingRate[] = {
-                96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050,
-                16000, 12000, 11025, 8000, 7350
-            };
-
-            if (freqIndex == 13 || freqIndex == 14) {
+        if (freqIndex == 13 || freqIndex == 14) {
+            return ERROR_MALFORMED;
+        }
+        if (freqIndex == 15) {
+            if (csd_size < 8) {
                 return ERROR_MALFORMED;
             }
-
-            sampleRate = kSamplingRate[freqIndex];
+            extSampleRate = br.getBits(24);
+        } else {
+            extSampleRate = kSamplingRate[freqIndex];
         }
+        mLastTrack->meta->setInt32(kKeyExtSampleRate, extSampleRate);
     }
 
     if (numChannels == 0) {
@@ -2439,6 +2462,7 @@ status_t MPEG4Extractor::updateAudioTrackInfoFromESDS_MPEG4Audio(
     }
 
     mLastTrack->meta->setInt32(kKeySampleRate, sampleRate);
+    mLastTrack->meta->setInt32(kKeyAACProfile, objectType);
 
     int32_t prevChannelCount;
     CHECK(mLastTrack->meta->findInt32(kKeyChannelCount, &prevChannelCount));
@@ -3266,6 +3290,10 @@ status_t MPEG4Source::read(
 
                 return ERROR_IO;
             }
+#ifdef ENABLE_AV_ENHANCEMENTS
+            //for AC3/EAC3 detection
+            ExtendedUtils::helper_Mpeg4ExtractorCheckAC3EAC3(mBuffer, mFormat, size);
+#endif
             CHECK(mBuffer != NULL);
             mBuffer->set_range(0, size);
             mBuffer->meta_data()->clear();

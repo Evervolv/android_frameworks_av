@@ -85,13 +85,14 @@ class MediaPlayerService : public BnMediaPlayerService
         virtual ssize_t         channelCount() const;
         virtual ssize_t         frameSize() const;
         virtual uint32_t        latency() const;
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
         virtual audio_stream_type_t streamType() const;
 #endif
         virtual float           msecsPerFrame() const;
         virtual status_t        getPosition(uint32_t *position) const;
         virtual status_t        getFramesWritten(uint32_t *frameswritten) const;
         virtual int             getSessionId() const;
+        virtual uint32_t        getSampleRate() const;
 
         virtual status_t        open(
                 uint32_t sampleRate, int channelCount, audio_channel_mask_t channelMask,
@@ -125,7 +126,7 @@ class MediaPlayerService : public BnMediaPlayerService
         virtual status_t        setParameters(const String8& keyValuePairs);
         virtual String8         getParameters(const String8& keys);
 
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
         virtual ssize_t         sampleRate() const;
         virtual status_t        getTimeStamp(uint64_t *tstamp);
 #endif
@@ -207,6 +208,7 @@ class MediaPlayerService : public BnMediaPlayerService
         virtual status_t        getPosition(uint32_t *position) const;
         virtual status_t        getFramesWritten(uint32_t *frameswritten) const;
         virtual int             getSessionId() const;
+        virtual uint32_t        getSampleRate() const;
 
         virtual status_t        open(
                 uint32_t sampleRate, int channelCount, audio_channel_mask_t channelMask,
@@ -227,7 +229,7 @@ class MediaPlayerService : public BnMediaPlayerService
 
                 void            setVolume(float left, float right) {}
         virtual status_t        setPlaybackRatePermille(int32_t ratePermille) { return INVALID_OPERATION; }
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
         virtual ssize_t         sampleRate() const;
 #else
                 uint32_t        sampleRate() const { return mSampleRate; }
@@ -388,6 +390,9 @@ private:
         virtual status_t        dump(int fd, const Vector<String16>& args) const;
 
                 int             getAudioSessionId() { return mAudioSessionId; }
+
+        virtual status_t        suspend();
+        virtual status_t        resume();
 
     private:
         friend class MediaPlayerService;

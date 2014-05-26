@@ -81,7 +81,7 @@
 #include "HDCP.h"
 #include "HTTPBase.h"
 #include "RemoteDisplay.h"
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
 #define DEFAULT_SAMPLE_RATE 44100
 #endif
 
@@ -929,7 +929,7 @@ status_t MediaPlayerService::Client::getDuration(int *msec)
 }
 
 status_t MediaPlayerService::Client::setNextPlayer(const sp<IMediaPlayer>& player) {
-    ALOGV("setNextPlayer");
+    ALOGD("gapless:setNextPlayer");
     Mutex::Autolock l(mLock);
     sp<Client> c = static_cast<Client*>(player.get());
     mNextClient = c;
@@ -1099,6 +1099,8 @@ void MediaPlayerService::Client::notify(
         if (msg == MEDIA_PLAYBACK_COMPLETE && client->mNextClient != NULL) {
             if (client->mAudioOutput != NULL)
                 client->mAudioOutput->switchToNextOutput();
+            ALOGD("gapless:current track played back");
+            ALOGD("gapless:try to do a gapless switch to next track");
             client->mNextClient->start();
             client->mNextClient->mClient->notify(MEDIA_INFO, MEDIA_INFO_STARTED_AS_NEXT, 0, obj);
         }
@@ -1145,6 +1147,22 @@ void MediaPlayerService::Client::addNewMetadataUpdate(media::Metadata::Type meta
     if (mMetadataUpdated.indexOf(metadata_type) < 0) {
         mMetadataUpdated.add(metadata_type);
     }
+}
+
+status_t MediaPlayerService::Client::suspend()
+{
+    ALOGV("[%d] suspend", mConnId);
+    sp<MediaPlayerBase> p = getPlayer();
+    if (p == NULL) return NO_INIT;
+    return p->suspend();
+}
+
+status_t MediaPlayerService::Client::resume()
+{
+    ALOGV("[%d] resume", mConnId);
+    sp<MediaPlayerBase> p = getPlayer();
+    if (p == NULL) return NO_INIT;
+    return p->resume();
 }
 
 #if CALLBACK_ANTAGONIZER
@@ -1379,7 +1397,7 @@ uint32_t MediaPlayerService::AudioOutput::latency () const
     return mTrack->latency();
 }
 
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
 audio_stream_type_t MediaPlayerService::AudioOutput::streamType () const
 {
     return mStreamType;
@@ -1397,7 +1415,7 @@ status_t MediaPlayerService::AudioOutput::getPosition(uint32_t *position) const
     return mTrack->getPosition(position);
 }
 
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
 ssize_t MediaPlayerService::AudioOutput::sampleRate() const
 {
     if (mTrack == 0) return NO_INIT;
@@ -1468,7 +1486,7 @@ status_t MediaPlayerService::AudioOutput::open(
 {
     mCallback = cb;
     mCallbackCookie = cookie;
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
     if (flags & AUDIO_OUTPUT_FLAG_LPA || flags & AUDIO_OUTPUT_FLAG_TUNNEL) {
         ALOGV("AudioOutput open: with flags %x",flags);
         channelMask = audio_channel_out_mask_from_count(channelCount);
@@ -1570,16 +1588,18 @@ status_t MediaPlayerService::AudioOutput::open(
         if ((mCallbackData == NULL && mCallback != NULL) ||
                 (mCallbackData != NULL && mCallback == NULL)) {
             // recycled track uses callbacks but the caller wants to use writes, or vice versa
-            ALOGV("can't chain callback and write");
+            ALOGD("gapless:can't chain callback and write, track can't be reused");
             reuse = false;
         } else if ((mRecycledTrack->getSampleRate() != sampleRate) ||
                 (mRecycledTrack->channelCount() != (uint32_t)channelCount) ) {
-            ALOGV("samplerate, channelcount differ: %u/%u Hz, %u/%d ch",
+            ALOGD("gapless:samplerate, channelcount differ: %u/%u Hz, %u/%d ch",
                   mRecycledTrack->getSampleRate(), sampleRate,
                   mRecycledTrack->channelCount(), channelCount);
+            ALOGD("gapless:track can't be reused");
             reuse = false;
         } else if (flags != mFlags) {
-            ALOGV("output flags differ %08x/%08x", flags, mFlags);
+            ALOGD("gapless:output flags differ %08x/%08x, track can't be reused",
+                flags, mFlags);
             reuse = false;
         } else if (mRecycledTrack->format() != format) {
             reuse = false;
@@ -1593,7 +1613,7 @@ status_t MediaPlayerService::AudioOutput::open(
     // If we can't recycle and both tracks are offloaded
     // we must close the previous output before opening a new one
     if (bothOffloaded && !reuse) {
-        ALOGV("both offloaded and not recycling");
+        ALOGD("copl:gapless:both offloaded and not reusing/recycling the track");
         deleteRecycledTrack();
     }
 
@@ -1660,7 +1680,7 @@ status_t MediaPlayerService::AudioOutput::open(
         }
 
         if (reuse) {
-            ALOGV("chaining to next output and recycling track");
+            ALOGD("copl:gapless:chaining to next output and reuse/recycling track");
             close();
             mTrack = mRecycledTrack;
             mRecycledTrack.clear();
@@ -1725,7 +1745,7 @@ void MediaPlayerService::AudioOutput::setNextOutput(const sp<AudioOutput>& nextO
 
 
 void MediaPlayerService::AudioOutput::switchToNextOutput() {
-    ALOGV("switchToNextOutput");
+    ALOGD("gapless:switchToNextOutput");
     if (mNextOutput != NULL) {
         if (mCallbackData != NULL) {
             mCallbackData->beginTrackSwitch();
@@ -1828,7 +1848,7 @@ status_t MediaPlayerService::AudioOutput::attachAuxEffect(int effectId)
 void MediaPlayerService::AudioOutput::CallbackWrapper(
         int event, void *cookie, void *info) {
     //ALOGV("callbackwrapper");
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
     if (event == AudioTrack::EVENT_UNDERRUN) {
         ALOGW("Event underrun");
         CallbackData *data = (CallbackData*)cookie;
@@ -1889,7 +1909,8 @@ void MediaPlayerService::AudioOutput::CallbackWrapper(
                     me, buffer->raw, buffer->size, me->mCallbackCookie,
                     CB_EVENT_FILL_BUFFER);
 
-            if (actualSize == 0 && buffer->size > 0 && me->mNextOutput == NULL) {
+            if (actualSize == 0 && buffer->size > 0 && me->mNextOutput == NULL &&
+                    (me->mFlags & AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD) == 0) {
                 // We've reached EOS but the audio track is not stopped yet,
                 // keep playing silence.
 
@@ -1918,7 +1939,7 @@ void MediaPlayerService::AudioOutput::CallbackWrapper(
         }
 
         data->unlock();
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
     }
 #endif
 
@@ -1928,6 +1949,12 @@ void MediaPlayerService::AudioOutput::CallbackWrapper(
 int MediaPlayerService::AudioOutput::getSessionId() const
 {
     return mSessionId;
+}
+
+uint32_t MediaPlayerService::AudioOutput::getSampleRate() const
+{
+    if (mTrack == 0) return 0;
+    return mTrack->getSampleRate();
 }
 
 #undef LOG_TAG
@@ -1955,7 +1982,7 @@ status_t MediaPlayerService::AudioCache::getPosition(uint32_t *position) const
     return NO_ERROR;
 }
 
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
 ssize_t MediaPlayerService::AudioCache::sampleRate() const
 {
     return mSampleRate;
@@ -2137,6 +2164,14 @@ void MediaPlayerService::AudioCache::notify(
 int MediaPlayerService::AudioCache::getSessionId() const
 {
     return 0;
+}
+
+uint32_t MediaPlayerService::AudioCache::getSampleRate() const
+{
+    if (mMsecsPerFrame == 0) {
+        return 0;
+    }
+    return (uint32_t)(1.e3 / mMsecsPerFrame);
 }
 
 void MediaPlayerService::addBatteryData(uint32_t params)

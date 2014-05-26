@@ -28,6 +28,7 @@
 #include "ASessionDescription.h"
 
 #include <ctype.h>
+#include <cutils/properties.h>
 
 #include <media/stagefright/foundation/ABuffer.h>
 #include <media/stagefright/foundation/ADebug.h>
@@ -133,6 +134,14 @@ struct MyHandler : public AHandler {
         mNetLooper->start(false /* runOnCallingThread */,
                           false /* canCallJava */,
                           PRIORITY_HIGHEST);
+
+        char value[PROPERTY_VALUE_MAX] = {0};
+        property_get("rtsp.transport.TCP", value, "false");
+        if (!strcmp(value, "true")) {
+            mTryTCPInterleaving = true;
+        } else {
+            mTryTCPInterleaving = false;
+        }
 
         // Strip any authentication info from the session url, we don't
         // want to transmit user/pass in cleartext.
@@ -939,7 +948,13 @@ struct MyHandler : public AHandler {
                 }
 
                 mNumAccessUnitsReceived = 0;
-                msg->post(kAccessUnitTimeoutUs);
+
+                //During Pause there will not be any access units coming from N/W and hence
+                //no need to post the check again
+                if (!mCheckPending) {
+                    ALOGI("Posting check again mcheckpening:%d",mCheckPending);
+                    msg->post(kAccessUnitTimeoutUs);
+                }
                 break;
             }
 
@@ -1396,7 +1411,10 @@ struct MyHandler : public AHandler {
         CHECK(GetAttribute(range.c_str(), "npt", &val));
 
         float npt1, npt2;
-        if (!ASessionDescription::parseNTPRange(val.c_str(), &npt1, &npt2)) {
+        int64_t durationUs;
+        if (!ASessionDescription::parseNTPRange(val.c_str(), &npt1, &npt2)
+            && !mSessionDesc->getDurationUs(&durationUs)
+            && (durationUs==0)) {
             // This is a live stream and therefore not seekable.
 
             ALOGI("This is a live stream");
@@ -1420,7 +1438,7 @@ struct MyHandler : public AHandler {
 
             size_t trackIndex = 0;
             while (trackIndex < mTracks.size()
-                    && !(val == mTracks.editItemAt(trackIndex).mURL)) {
+                    && !(mTracks.editItemAt(trackIndex).mURL.endsWith(val.c_str()))) {
                 ++trackIndex;
             }
             CHECK_LT(trackIndex, mTracks.size());

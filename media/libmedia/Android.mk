@@ -79,9 +79,11 @@ LOCAL_CFLAGS += -DUSE_SAMSUNG_SEPARATEDSTREAM
 endif
 
 ifeq ($(BOARD_USES_QCOM_HARDWARE),true)
-LOCAL_SRC_FILES += \
-    IDirectTrack.cpp \
-    IDirectTrackClient.cpp
+    ifneq ($(filter caf bfam,$(TARGET_QCOM_AUDIO_VARIANT)),)
+        ifeq ($(BOARD_USES_LEGACY_ALSA_AUDIO),true)
+            LOCAL_SRC_FILES += IDirectTrack.cpp IDirectTrackClient.cpp
+        endif
+    endif
 endif
 
 # for <cutils/atomic-inline.h>
@@ -94,6 +96,10 @@ LOCAL_SHARED_LIBRARIES := \
 	libui liblog libcutils libutils libbinder libsonivox libicuuc libexpat \
         libcamera_client libstagefright_foundation \
         libgui libdl libaudioutils
+
+ifeq ($(BOARD_USES_QCOM_HARDWARE),true)
+LOCAL_SHARED_LIBRARIES += libaudioparameter
+endif
 
 LOCAL_WHOLE_STATIC_LIBRARY := libmedia_helper
 

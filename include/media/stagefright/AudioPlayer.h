@@ -103,9 +103,7 @@ private:
     int64_t mSeekTimeUs;
 
     bool mStarted;
-#ifdef QCOM_HARDWARE
     bool mSourcePaused;
-#endif
 
     bool mIsFirstBuffer;
     status_t mFirstBufferResult;
@@ -118,6 +116,7 @@ private:
     bool mPlaying;
     int64_t mStartPosUs;
     const uint32_t mCreateFlags;
+    bool mPauseRequired;
 
     static void AudioCallback(int event, void *user, void *info);
     void AudioCallback(int event, void *info);
@@ -134,7 +133,7 @@ private:
     void reset();
 
     uint32_t getNumFramesPendingPlayout() const;
-    int64_t getOutputPlayPositionUs_l() const;
+    int64_t getOutputPlayPositionUs_l();
 
     bool allowDeepBuffering() const { return (mCreateFlags & ALLOW_DEEP_BUFFERING) != 0; }
     bool useOffload() const { return (mCreateFlags & USE_OFFLOAD) != 0; }

@@ -64,7 +64,9 @@ enum camcorder_quality {
     CAMCORDER_QUALITY_TIME_LAPSE_WVGA = 1009,
     CAMCORDER_QUALITY_TIME_LAPSE_VGA = 1010,
     CAMCORDER_QUALITY_TIME_LAPSE_WQVGA = 1011,
-    CAMCORDER_QUALITY_TIME_LAPSE_LIST_END = 1011,
+    CAMCORDER_QUALITY_TIME_LAPSE_4kUHD = 1012,
+    CAMCORDER_QUALITY_TIME_LAPSE_4kDCI = 1013,
+    CAMCORDER_QUALITY_TIME_LAPSE_LIST_END = 1013,
 #else
     CAMCORDER_QUALITY_TIME_LAPSE_LIST_END = 1007,
 #endif
@@ -156,6 +158,9 @@ public:
      * enc.vid.bps.max - max bit rate in bits per second
      * enc.vid.fps.min - min frame rate in frames per second
      * enc.vid.fps.max - max frame rate in frames per second
+     * enc.vid.hfr.width.max - max hfr video frame width
+     * enc.vid.hfr.height.max - max hfr video frame height
+     * enc.vid.hfr.mode.max - max hfr mode
      */
     int getVideoEncoderParamByName(const char *name, video_encoder codec) const;
 
@@ -320,12 +325,16 @@ private:
                         int minBitRate, int maxBitRate,
                         int minFrameWidth, int maxFrameWidth,
                         int minFrameHeight, int maxFrameHeight,
-                        int minFrameRate, int maxFrameRate)
+                        int minFrameRate, int maxFrameRate,
+                        int maxHFRFrameWidth, int maxHFRFrameHeight,
+                        int maxHFRMode)
             : mCodec(codec),
               mMinBitRate(minBitRate), mMaxBitRate(maxBitRate),
               mMinFrameWidth(minFrameWidth), mMaxFrameWidth(maxFrameWidth),
               mMinFrameHeight(minFrameHeight), mMaxFrameHeight(maxFrameHeight),
-              mMinFrameRate(minFrameRate), mMaxFrameRate(maxFrameRate) {}
+              mMinFrameRate(minFrameRate), mMaxFrameRate(maxFrameRate),
+              mMaxHFRFrameWidth(maxHFRFrameWidth), mMaxHFRFrameHeight(maxHFRFrameHeight),
+              mMaxHFRMode(maxHFRMode) {}
 
          ~VideoEncoderCap() {}
 
@@ -334,6 +343,8 @@ private:
         int mMinFrameWidth, mMaxFrameWidth;
         int mMinFrameHeight, mMaxFrameHeight;
         int mMinFrameRate, mMaxFrameRate;
+        int mMaxHFRFrameWidth, mMaxHFRFrameHeight;
+        int mMaxHFRMode;
     };
 
     struct AudioEncoderCap {

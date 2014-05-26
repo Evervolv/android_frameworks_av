@@ -107,6 +107,9 @@ struct AwesomePlayer {
     void printFileName(int fd);
     status_t dump(int fd, const Vector<String16> &args) const;
 
+    status_t suspend();
+    status_t resume();
+
 private:
     friend struct AwesomeEvent;
     friend struct PreviewPlayer;
@@ -189,6 +192,7 @@ private:
     uint32_t mFlags;
     uint32_t mExtractorFlags;
     uint32_t mSinceLastDropped;
+    bool mDropFramesDisable; // hevc test
 
     int64_t mTimeSourceDeltaUs;
     int64_t mVideoTimeUs;
@@ -207,9 +211,11 @@ private:
 
     bool mWatchForAudioSeekComplete;
     bool mWatchForAudioEOS;
-#ifdef QCOM_ENHANCED_AUDIO
+#ifdef QCOM_DIRECTTRACK
     static int mTunnelAliveAP;
 #endif
+
+    bool mIsFirstFrameAfterResume;
 
     sp<TimedEventQueue::Event> mVideoEvent;
     bool mVideoEventPending;
@@ -237,6 +243,7 @@ private:
     void postAudioTearDownEvent(int64_t delayUs);
 
     status_t play_l();
+    status_t fallbackToSWDecoder();
 
     MediaBuffer *mVideoBuffer;
 
@@ -247,7 +254,6 @@ private:
     sp<DecryptHandle> mDecryptHandle;
 
     int64_t mLastVideoTimeUs;
-    int64_t mFrameDurationUs;
     TimedTextDriver *mTextDriver;
 
     sp<WVMExtractor> mWVMExtractor;
@@ -320,7 +326,7 @@ private:
         ASSIGN
     };
     void modifyFlags(unsigned value, FlagMode mode);
-#ifdef QCOM_ENHANCED_AUDIO
+#ifdef QCOM_DIRECTTRACK
     void checkTunnelExceptions();
 #endif
     void logFirstFrame();
@@ -391,14 +397,16 @@ private:
     status_t selectTrack(size_t trackIndex, bool select);
 
     size_t countTracks() const;
+    bool isWidevineContent() const;
 
-#ifdef QCOM_ENHANCED_AUDIO
+#ifdef QCOM_DIRECTTRACK
     bool inSupportedTunnelFormats(const char * mime);
     //Flag to check if tunnel mode audio is enabled
     bool mIsTunnelAudio;
 #endif
     AwesomePlayer(const AwesomePlayer &);
     AwesomePlayer &operator=(const AwesomePlayer &);
+    bool mReadRetry;
 };
 
 }  // namespace android

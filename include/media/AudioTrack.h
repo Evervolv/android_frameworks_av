@@ -24,7 +24,7 @@
 #include <media/AudioTimestamp.h>
 #include <media/IAudioTrack.h>
 #include <utils/threads.h>
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
 #include <media/IDirectTrack.h>
 #include <media/IDirectTrackClient.h>
 #endif
@@ -38,12 +38,7 @@ class StaticAudioTrackClientProxy;
 
 // ----------------------------------------------------------------------------
 
-#ifdef QCOM_HARDWARE
-class AudioTrack : public BnDirectTrackClient,
-                   virtual public RefBase
-#else
 class AudioTrack : public RefBase
-#endif
 {
 public:
     enum channel_index {
@@ -76,7 +71,7 @@ public:
         EVENT_NEW_TIMESTAMP = 8,    // Delivered periodically and when there's a significant change
                                     // in the mapping from frame position to presentation time.
                                     // See AudioTimestamp for the information included with event.
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
         EVENT_HW_FAIL = 9,          // ADSP failure.
 #endif
     };
@@ -276,7 +271,7 @@ public:
      * This includes the latency due to AudioTrack buffer size, AudioMixer (if any)
      * and audio hardware driver.
      */
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
             uint32_t    latency() const;
 #else
             uint32_t    latency() const     { return mLatency; }
@@ -599,7 +594,7 @@ public:
      * Returns NO_ERROR if timestamp is valid.
      */
       virtual status_t    getTimestamp(AudioTimestamp& timestamp);
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
       virtual void notify(int msg);
       virtual status_t    getTimeStamp(uint64_t *tstamp);
 #endif
@@ -621,6 +616,7 @@ protected:
 
                 void        pause();    // suspend thread from execution at next loop boundary
                 void        resume();   // allow thread to execute, if not requested to exit
+                void        pauseSync();
 
     private:
                 void        pauseInternal(nsecs_t ns = 0LL);
@@ -636,6 +632,8 @@ protected:
         bool                mPausedInt; // whether thread internally requests pause
         nsecs_t             mPausedNs;  // if mPausedInt then associated timeout, otherwise ignored
         bool                mIgnoreNextPausedInt;   // whether to ignore next mPausedInt request
+        bool                mCmdAckPending;
+        Condition           mCmdAck;
     };
 
             // body of AudioTrackThread::threadLoop()
@@ -673,7 +671,7 @@ protected:
             bool     isOffloaded() const
                 { return (mFlags & AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD) != 0; }
 
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
     sp<IDirectTrack>        mDirectTrack;
 #endif
     // Next 3 fields may be changed if IAudioTrack is re-created, but always != 0
@@ -684,7 +682,7 @@ protected:
     sp<AudioTrackThread>    mAudioTrackThread;
     float                   mVolume[2];
     float                   mSendLevel;
-    uint32_t                mSampleRate;
+    mutable uint32_t        mSampleRate;            // mutable because getSampleRate() can update it.
     size_t                  mFrameCount;            // corresponds to current IAudioTrack
     size_t                  mReqFrameCount;         // frame count to request the next time a new
                                                     // IAudioTrack is needed
@@ -743,7 +741,7 @@ protected:
     uint32_t                mUpdatePeriod;          // in frames, zero means no EVENT_NEW_POS
 
     audio_output_flags_t    mFlags;
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
     sp<IAudioFlinger>       mAudioFlinger;
     audio_io_handle_t       mAudioDirectOutput;
 #endif
@@ -752,7 +750,7 @@ protected:
 
     mutable Mutex           mLock;
 
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
     void*                   mObserver;
 #endif
     bool                    mIsTimed;
@@ -770,6 +768,7 @@ protected:
 
     bool                    mInUnderrun;            // whether track is currently in underrun state
     String8                 mName;                  // server's name for this IAudioTrack
+    uint32_t                mPausedPosition;
 
 private:
     class DeathNotifier : public IBinder::DeathRecipient {
@@ -785,6 +784,17 @@ private:
     uint32_t                mSequence;              // incremented for each new IAudioTrack attempt
     audio_io_handle_t       mOutput;                // cached output io handle
     int                     mClientUid;
+
+#ifdef QCOM_DIRECTTRACK
+    class DirectClient : public BnDirectTrackClient {
+    public:
+        DirectClient(AudioTrack * audioTrack) : mAudioTrack(audioTrack) { }
+        virtual void notify(int msg);
+    private:
+        const wp<AudioTrack> mAudioTrack;
+    };
+    sp<DirectClient>       mDirectClient;
+#endif
 };
 
 class TimedAudioTrack : public AudioTrack

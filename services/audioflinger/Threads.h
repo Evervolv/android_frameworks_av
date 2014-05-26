@@ -138,7 +138,7 @@ public:
     virtual     status_t    setParameters(const String8& keyValuePairs);
     virtual     String8     getParameters(const String8& keys) = 0;
     virtual     void        audioConfigChanged_l(int event, int param = 0) = 0;
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
                 void        effectConfigChanged();
 #endif
                 void        sendIoConfigEvent(int event, int param = 0);
@@ -395,7 +395,7 @@ protected:
     virtual     bool        waitingAsyncCallback();
     virtual     bool        waitingAsyncCallback_l();
     virtual     bool        shouldStandby_l();
-
+    virtual     void        onAddNewTrack_l();
 
     // ThreadBase virtuals
     virtual     void        preExit();
@@ -411,7 +411,7 @@ public:
 
                 void        setMasterVolume(float value);
                 void        setMasterMute(bool muted);
-
+                void        setPostPro();
                 void        setStreamVolume(audio_stream_type_t stream, float value);
                 void        setStreamMute(audio_stream_type_t stream, bool muted);
 
@@ -469,7 +469,8 @@ public:
                 virtual bool     isValidSyncEvent(const sp<SyncEvent>& event) const;
 
                 // called with AudioFlinger lock held
-                        void     invalidateTracks(audio_stream_type_t streamType);
+       void     invalidateTracks(audio_stream_type_t streamType);
+       virtual  void onFatalError();
 
     virtual     size_t      frameCount() const { return mNormalFrameCount; }
 
@@ -542,6 +543,7 @@ private:
     bool        destroyTrack_l(const sp<Track>& track);
     void        removeTrack_l(const sp<Track>& track);
     void        broadcast_l();
+    void        invalidateTracks_l(audio_stream_type_t streamType);
 
     void        readOutputParameters();
 
@@ -559,6 +561,11 @@ private:
     int                             mNumWrites;
     int                             mNumDelayedWrites;
     bool                            mInWrite;
+#ifdef QCOM_DIRECTTRACK
+    // cache the flags here. Based on falgs type of output(normal/direct) to be open
+    // is decided  in createtrack_l()
+    audio_output_flags_t            mOutputFlags;
+#endif
 
     // FIXME rename these former local variables of threadLoop to standard "m" names
     nsecs_t                         standbyTime;
@@ -633,7 +640,6 @@ public:
 protected:
                 // accessed by both binder threads and within threadLoop(), lock on mutex needed
                 unsigned    mFastTrackAvailMask;    // bit i set if fast track [i] is available
-    virtual     void        flushOutput_l();
 
 private:
     // timestamp latch:
@@ -752,11 +758,12 @@ protected:
     // threadLoop snippets
     virtual     mixer_state prepareTracks_l(Vector< sp<Track> > *tracksToRemove);
     virtual     void        threadLoop_exit();
-    virtual     void        flushOutput_l();
 
     virtual     bool        waitingAsyncCallback();
     virtual     bool        waitingAsyncCallback_l();
     virtual     bool        shouldStandby_l();
+    virtual     void        onAddNewTrack_l();
+    virtual     void        onFatalError();
 
 private:
                 void        flushHw_l();

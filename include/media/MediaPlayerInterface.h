@@ -83,7 +83,7 @@ public:
                                     // back (after stop is called)
             CB_EVENT_TEAR_DOWN,      // The AudioTrack was invalidated due to use case change:
                                     // Need to re-evaluate offloading options
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
             CB_EVENT_UNDERRUN,
             CB_EVENT_HW_FAIL
 #endif
@@ -102,7 +102,7 @@ public:
         virtual ssize_t     channelCount() const = 0;
         virtual ssize_t     frameSize() const = 0;
         virtual uint32_t    latency() const = 0;
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
         virtual audio_stream_type_t    streamType() const {return AUDIO_STREAM_DEFAULT;}
 #endif
         virtual float       msecsPerFrame() const = 0;
@@ -110,6 +110,7 @@ public:
         virtual status_t    getFramesWritten(uint32_t *frameswritten) const = 0;
         virtual int         getSessionId() const = 0;
         virtual audio_stream_type_t getAudioStreamType() const = 0;
+        virtual uint32_t    getSampleRate() const = 0;
 
         // If no callback is specified, use the "write" API below to submit
         // audio data.
@@ -134,7 +135,7 @@ public:
         virtual status_t    setParameters(const String8& keyValuePairs) { return NO_ERROR; };
         virtual String8     getParameters(const String8& keys) { return String8::empty(); };
 
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_DIRECTTRACK
         virtual ssize_t     sampleRate() const {return 0;};
         virtual status_t    getTimeStamp(uint64_t *tstamp) {return 0;};
 #endif
@@ -225,6 +226,9 @@ public:
     virtual status_t dump(int fd, const Vector<String16> &args) const {
         return INVALID_OPERATION;
     }
+
+    virtual status_t suspend() { return INVALID_OPERATION; }
+    virtual status_t resume() { return INVALID_OPERATION; }
 
     virtual status_t updateProxyConfig(
             const char *host, int32_t port, const char *exclusionList) {
