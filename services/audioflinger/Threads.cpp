@@ -146,12 +146,12 @@ static const int kPriorityFastMixer = 3;
 
 // IAudioFlinger::createTrack() reports back to client the total size of shared memory area
 // for the track.  The client then sub-divides this into smaller buffers for its use.
-// Currently the client uses double-buffering by default, but doesn't tell us about that.
-// So for now we just assume that client is double-buffered.
-// FIXME It would be better for client to tell AudioFlinger whether it wants double-buffering or
-// N-buffering, so AudioFlinger could allocate the right amount of memory.
+// Currently the client uses N-buffering by default, but doesn't tell us about the value of N.
+// So for now we just assume that client is double-buffered for fast tracks.
+// FIXME It would be better for client to tell AudioFlinger the value of N,
+// so AudioFlinger could allocate the right amount of memory.
 // See the client's minBufCount and mNotificationFramesAct calculations for details.
-static const int kFastTrackMultiplier = 1;
+static const int kFastTrackMultiplier = 2;
 
 // ----------------------------------------------------------------------------
 
@@ -1262,7 +1262,7 @@ sp<AudioFlinger::PlaybackThread::Track> AudioFlinger::PlaybackThread::createTrac
               (
                 (tid != -1) &&
                 ((frameCount == 0) ||
-                (frameCount >= (mFrameCount * kFastTrackMultiplier)))
+                (frameCount >= mFrameCount))
               )
             ) &&
             // PCM data
@@ -1391,8 +1391,10 @@ sp<AudioFlinger::PlaybackThread::Track> AudioFlinger::PlaybackThread::createTrac
             track = TimedTrack::create(this, client, streamType, sampleRate, format,
                     channelMask, frameCount, sharedBuffer, sessionId, uid);
         }
+
         if (track == 0 || track->getCblk() == NULL || track->name() < 0) {
             lStatus = NO_MEMORY;
+            // track must be cleared from the caller as the caller has the AF lock
             goto Exit;
         }
 
@@ -1978,7 +1980,7 @@ ssize_t AudioFlinger::PlaybackThread::threadLoop_write()
     // otherwise use the HAL / AudioStreamOut directly
     } else {
         // Direct output and offload threads
-        size_t offset = (mCurrentWriteLength - mBytesRemaining) / sizeof(int16_t);
+        size_t offset = (mCurrentWriteLength - mBytesRemaining);
         if (mUseAsyncWrite) {
             ALOGW_IF(mWriteAckSequence & 1, "threadLoop_write(): out of sequence write request");
             mWriteAckSequence += 2;
@@ -1989,7 +1991,7 @@ ssize_t AudioFlinger::PlaybackThread::threadLoop_write()
         // FIXME We should have an implementation of timestamps for direct output threads.
         // They are used e.g for multichannel PCM playback over HDMI.
         bytesWritten = mOutput->stream->write(mOutput->stream,
-                                                   mMixBuffer + offset, mBytesRemaining);
+                                                   (char *)mMixBuffer + offset, mBytesRemaining);
         if (mUseAsyncWrite &&
                 ((bytesWritten < 0) || (bytesWritten == (ssize_t)mBytesRemaining))) {
             // do not wait for async callback in case of error of full write
@@ -3140,15 +3142,8 @@ AudioFlinger::PlaybackThread::mixer_state AudioFlinger::MixerThread::prepareTrac
                 (mMixerStatusIgnoringFastTracks == MIXER_TRACKS_READY)) {
             minFrames = desiredFrames;
         }
-        // It's not safe to call framesReady() for a static buffer track, so assume it's ready
-        size_t framesReady;
-        if (track->sharedBuffer() == 0) {
-            framesReady = track->framesReady();
-        } else if (track->isStopped()) {
-            framesReady = 0;
-        } else {
-            framesReady = 1;
-        }
+
+        size_t framesReady = track->framesReady();
         if ((framesReady >= minFrames) && track->isReady() &&
                 !track->isPaused() && !track->isTerminated())
         {
@@ -3969,7 +3964,12 @@ bool AudioFlinger::AsyncCallbackThread::threadLoop()
 
         {
             Mutex::Autolock _l(mLock);
-            mWaitWorkCV.wait(mLock);
+            while (!((mWriteAckSequence & 1) ||
+                     (mDrainSequence & 1) ||
+                     exitPending())) {
+                mWaitWorkCV.wait(mLock);
+            }
+
             if (exitPending()) {
                 break;
             }
@@ -4825,7 +4825,7 @@ sp<AudioFlinger::RecordThread::RecordTrack>  AudioFlinger::RecordThread::createR
             (
                 (tid != -1) &&
                 ((frameCount == 0) ||
-                (frameCount >= (mFrameCount * kFastTrackMultiplier)))
+                (frameCount >= mFrameCount))
             ) &&
             // FIXME when record supports non-PCM data, also check for audio_is_linear_pcm(format)
             // mono or stereo
@@ -4887,7 +4887,7 @@ sp<AudioFlinger::RecordThread::RecordTrack>  AudioFlinger::RecordThread::createR
         if (track->getCblk() == 0) {
             ALOGE("createRecordTrack_l() no control block");
             lStatus = NO_MEMORY;
-            track.clear();
+            // track must be cleared from the caller as the caller has the AF lock
             goto Exit;
         }
         mTracks.add(track);
