@@ -985,6 +985,10 @@ status_t AwesomePlayer::play_l() {
             }
 
             if (err != OK) {
+                if ((mAudioPlayer == NULL || !(mFlags & AUDIOPLAYER_STARTED))
+                        && mAudioSource != NULL) {
+                    mAudioSource->stop();
+                }
                 mAudioSource.clear();
                 mOmxSource.clear();
 
@@ -1914,6 +1918,10 @@ void AwesomePlayer::onVideoEvent() {
             ALOGE("Failed to fallback to SW decoder err = %d", err);
             notifyListener_l(MEDIA_ERROR, MEDIA_ERROR_UNKNOWN, err);
 
+            if ((mAudioPlayer == NULL || !(mFlags & AUDIOPLAYER_STARTED))
+                    && mAudioSource != NULL) {
+                mAudioSource->stop();
+            }
             mAudioSource.clear();
             mOmxSource.clear();
 
