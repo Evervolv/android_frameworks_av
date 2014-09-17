@@ -174,6 +174,7 @@ private:
     bool mVideoRendererIsPreview;
     int32_t mMediaRenderingStartGeneration;
     int32_t mStartGeneration;
+    ssize_t mActiveVideoTrackIndex;
 
     ssize_t mActiveAudioTrackIndex;
     sp<MediaSource> mAudioTrack;
@@ -247,6 +248,7 @@ private:
 
     int64_t mLastVideoTimeUs;
     TimedTextDriver *mTextDriver;
+    ssize_t mActiveTextTrackIndex;
 
     sp<WVMExtractor> mWVMExtractor;
     sp<MediaExtractor> mExtractor;
