@@ -216,7 +216,8 @@ AwesomePlayer::AwesomePlayer()
       mLastVideoTimeUs(-1),
       mTextDriver(NULL),
       mOffloadAudio(false),
-      mAudioTearDown(false) {
+      mAudioTearDown(false),
+      mConsumeRights(true) {
     CHECK_EQ(mClient.connect(), (status_t)OK);
 
     DataSource::RegisterDefaultSniffers();
@@ -385,6 +386,9 @@ void AwesomePlayer::checkDrmStatus(const sp<DataSource>& dataSource) {
         CHECK(mDrmManagerClient);
         if (RightsStatus::RIGHTS_VALID != mDecryptHandle->status) {
             notifyListener_l(MEDIA_ERROR, MEDIA_ERROR_UNKNOWN, ERROR_DRM_NO_LICENSE);
+        } else {
+            ALOGV("awesome: calling consumeRights, fd");
+            mConsumeRights = true;
         }
     }
 }
@@ -903,6 +907,8 @@ void AwesomePlayer::onStreamDone() {
         ALOGV("MEDIA_PLAYBACK_COMPLETE");
         notifyListener_l(MEDIA_PLAYBACK_COMPLETE);
 
+        mConsumeRights = true;
+
         pause_l(true /* at eos */);
 
         // If audio hasn't completed MEDIA_SEEK_COMPLETE yet,
@@ -920,6 +926,12 @@ status_t AwesomePlayer::play() {
     ATRACE_CALL();
 
     Mutex::Autolock autoLock(mLock);
+
+    if (mDrmManagerClient && mDecryptHandle != NULL && mConsumeRights) {
+        ALOGV("awesome: calling consumeRights,ap=[%p]", this);
+        mDrmManagerClient->consumeRights(mDecryptHandle, Action::PLAY, true);
+        mConsumeRights = false;
+    }
 
     modifyFlags(CACHE_UNDERRUN, CLEAR);
 
@@ -1260,6 +1272,9 @@ status_t AwesomePlayer::pause() {
     Mutex::Autolock autoLock(mLock);
 
     modifyFlags(CACHE_UNDERRUN, CLEAR);
+    if (mDecryptHandle != NULL) {
+        mConsumeRights = false;
+    }
 
     return pause_l();
 }
@@ -1478,6 +1493,9 @@ status_t AwesomePlayer::seekTo_l(int64_t timeUs) {
     }
 
     if (!(mFlags & PLAYING)) {
+        if (mDecryptHandle != NULL) {
+            mConsumeRights = false;
+        }
         ALOGV("seeking while paused, sending SEEK_COMPLETE notification"
              " immediately.");
 
