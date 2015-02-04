@@ -52,6 +52,7 @@ struct NuPlayer::Source : public AHandler {
         kWhatTimedTextData,
         kWhatQueueDecoderShutdown,
         kWhatDrmNoLicense,
+        kWhatShowImage,
     };
 
     // The provides message is used to notify the player about various
@@ -114,6 +115,18 @@ struct NuPlayer::Source : public AHandler {
     }
 
     virtual int64_t getServerTimeoutUs();
+
+    virtual status_t suspend() {
+        return INVALID_OPERATION;
+    }
+
+    virtual status_t resumeFromSuspended() {
+        return INVALID_OPERATION;
+    }
+
+    virtual status_t getCachedDuration(int64_t *durationUs) {
+        return getDuration(durationUs);
+    }
 
 protected:
     virtual ~Source() {}
