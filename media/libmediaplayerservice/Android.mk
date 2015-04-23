@@ -60,6 +60,19 @@ LOCAL_MODULE:= libmediaplayerservice
 
 LOCAL_32_BIT_ONLY := true
 
+ifeq ($(TARGET_ENABLE_QC_AV_ENHANCEMENTS),true)
+    LOCAL_CFLAGS += -DENABLE_AV_ENHANCEMENTS
+    LOCAL_C_INCLUDES += $(TOP)/frameworks/av/include/media
+    LOCAL_C_INCLUDES += $(TOP)/$(call project-path-for,qcom-media)/mm-core/inc
+endif
+
+#QTI FLAC Decoder
+ifeq ($(call is-vendor-board-platform,QCOM),true)
+ifeq ($(strip $(AUDIO_FEATURE_ENABLED_EXTN_FLAC_DECODER)),true)
+    LOCAL_CFLAGS += -DQTI_FLAC_DECODER
+endif
+endif
+
 include $(BUILD_SHARED_LIBRARY)
 
 include $(call all-makefiles-under,$(LOCAL_PATH))

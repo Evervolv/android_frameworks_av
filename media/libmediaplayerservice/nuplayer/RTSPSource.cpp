@@ -315,8 +315,17 @@ void NuPlayer::RTSPSource::performSeek(int64_t seekTimeUs) {
         TrackInfo *info = &mTracks.editItemAt(index);
         sp<AnotherPacketSource> source = info->mSource;
         if (source != NULL) {
-            source->queueDiscontinuity(ATSParser::DISCONTINUITY_SEEK, NULL, true);
+            //TBD: Praveen . DISCONTINUITY_SEEK is deprecated. huiy to check
+            //source->queueDiscontinuity(ATSParser::DISCONTINUITY_SEEK, NULL, true);
         }
+    }
+}
+
+int64_t NuPlayer::RTSPSource::getServerTimeoutUs() {
+    if (mHandler != NULL) {
+        return mHandler->getServerTimeoutUs();
+    } else {
+        return 0;
     }
 }
 

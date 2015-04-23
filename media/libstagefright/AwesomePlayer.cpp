@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+ * Not a Contribution.
  * Copyright (C) 2009 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,7 +46,12 @@
 #include <media/stagefright/foundation/ADebug.h>
 #include <media/stagefright/timedtext/TimedTextDriver.h>
 #include <media/stagefright/AudioPlayer.h>
-#include <media/stagefright/ClockEstimator.h>
+#ifdef QCOM_DIRECTTRACK
+#include <media/stagefright/LPAPlayer.h>
+#ifdef USE_TUNNEL_MODE
+#include <media/stagefright/TunnelPlayer.h>
+#endif
+#endif
 #include <media/stagefright/DataSource.h>
 #include <media/stagefright/FileSource.h>
 #include <media/stagefright/MediaBuffer.h>
@@ -55,6 +62,7 @@
 #include <media/stagefright/MetaData.h>
 #include <media/stagefright/OMXCodec.h>
 #include <media/stagefright/Utils.h>
+#include "include/ExtendedUtils.h"
 
 #include <gui/IGraphicBufferProducer.h>
 #include <gui/Surface.h>
@@ -63,8 +71,15 @@
 
 #include <cutils/properties.h>
 
+#ifdef ENABLE_AV_ENHANCEMENTS
+#include "QCMediaDefs.h"
+#include "QCMetaData.h"
+#endif
+
 #define USE_SURFACE_ALLOC 1
 #define FRAME_DROP_FREQ 0
+#define LPA_MIN_DURATION_USEC_ALLOWED 30000000
+#define LPA_MIN_DURATION_USEC_DEFAULT 60000000
 
 namespace android {
 
@@ -72,6 +87,9 @@ static int64_t kLowWaterMarkUs = 2000000ll;  // 2secs
 static int64_t kHighWaterMarkUs = 5000000ll;  // 5secs
 static const size_t kLowWaterMarkBytes = 40000;
 static const size_t kHighWaterMarkBytes = 200000;
+#ifdef QCOM_DIRECTTRACK
+int AwesomePlayer::mTunnelAliveAP = 0;
+#endif
 
 // maximum time in paused state when offloading audio decompression. When elapsed, the AudioPlayer
 // is destroyed to allow the audio DSP to power down.
@@ -217,7 +235,11 @@ AwesomePlayer::AwesomePlayer()
       mTextDriver(NULL),
       mOffloadAudio(false),
       mAudioTearDown(false),
-      mConsumeRights(true) {
+      mConsumeRights(true),
+#ifdef MTK_HARDWARE
+      mAVSyncTimeUs(-1),
+#endif
+      mIsFirstFrameAfterResume(false) {
     CHECK_EQ(mClient.connect(), (status_t)OK);
 
     DataSource::RegisterDefaultSniffers();
@@ -240,9 +262,17 @@ AwesomePlayer::AwesomePlayer()
                               &AwesomePlayer::onAudioTearDownEvent);
     mAudioTearDownEventPending = false;
 
-    mClockEstimator = new WindowedLinearFitEstimator();
+    mDurationUs = -1;
+    mAudioTearDownPosition = 0;
+    mVideoFrameDeltaUs = 0;
+#ifdef QCOM_DIRECTTRACK
+    mIsTunnelAudio = false;
+#endif
 
     reset();
+
+    mPlayerExtendedStats = (PlayerExtendedStats *)ExtendedStats::Create(
+            ExtendedStats::PLAYER, "AwesomePlayer", gettid());
 }
 
 AwesomePlayer::~AwesomePlayer() {
@@ -252,7 +282,57 @@ AwesomePlayer::~AwesomePlayer() {
 
     reset();
 
+#ifdef QCOM_DIRECTTRACK
+    // Disable Tunnel Mode Audio
+    if (mIsTunnelAudio) {
+        if(mTunnelAliveAP > 0) {
+            mTunnelAliveAP--;
+            ALOGV("mTunnelAliveAP = %d", mTunnelAliveAP);
+        }
+    }
+    mIsTunnelAudio = false;
+#endif
     mClient.disconnect();
+}
+
+void AwesomePlayer::printStats() {
+    char value[PROPERTY_VALUE_MAX];
+    property_get("persist.debug.sf.statistics", value, "0");
+    if (atoi(value) && mVideoSource != NULL) {
+        ALOGI("===========================\n"
+            "   videoDimensions(%d x %d)\n"
+            "   Total Video Frames Decoded(%lld)\n"
+            "   Total Video Frames Rendered(%lld)\n"
+            "   Total Playback Duration(%lld ms)\n"
+            "   numVideoFramesDropped(%lld)\n"
+            "   Average Frames Per Second(%.4f)\n"
+            "   Last Seek To Time(%lld ms)\n"
+            "   Last Paused Time(%lld ms)\n"
+            "   First Frame Latency (%lld ms)\n"
+            "   Number of times AV Sync Lost(%u)\n"
+            "   Max Video Ahead Time Delta(%u)\n"
+            "   Max Video Behind Time Delta(%u)\n"
+            "   Max Time Sync Loss(%u)\n"
+            "   EOS(%d)\n"
+            "   PLAYING(%d)\n"
+            "===========================\n\n",
+            mStats.mVideoWidth,
+            mStats.mVideoHeight,
+            mStats.mNumVideoFramesDecoded,
+            mStats.mTotalFrames,
+            mStats.mTotalTimeUs/1000,
+            mStats.mNumVideoFramesDropped,
+            mStats.mTotalTimeUs > 0 ? ((double)(mStats.mTotalFrames)*1E6)/((double)mStats.mTotalTimeUs) : 0,
+            mStats.mLastSeekToTimeMs,
+            mStats.mLastPausedTimeMs,
+            mStats.mFirstFrameLatencyUs/1000,
+            mStats.mNumTimesSyncLoss,
+            -mStats.mMaxEarlyDelta/1000,
+            mStats.mMaxLateDelta/1000,
+            mStats.mMaxTimeSyncLoss/1000,
+            (mFlags & VIDEO_AT_EOS) > 0,
+            (mFlags & PLAYING) > 0);
+    }
 }
 
 void AwesomePlayer::cancelPlayerEvents(bool keepNotifications) {
@@ -304,6 +384,10 @@ status_t AwesomePlayer::setDataSource_l(
         const KeyedVector<String8, String8> *headers) {
     reset_l();
 
+    ExtendedStats::AutoProfile autoProfile(
+            STATS_PROFILE_SET_DATA_SOURCE, mPlayerExtendedStats);
+    PLAYER_STATS(profileStart, STATS_PROFILE_START_LATENCY);
+
     mHTTPService = httpService;
     mUri = uri;
 
@@ -323,6 +407,10 @@ status_t AwesomePlayer::setDataSource_l(
 
     ALOGI("setDataSource_l(%s)", uriDebugString(mUri, mFlags & INCOGNITO).c_str());
 
+    if (mUri && !(mFlags & INCOGNITO)) {
+        ALOGD("printFileName %s",mUri.string());
+    }
+
     // The actual work will be done during preparation in the call to
     // ::finishSetDataSource_l to avoid blocking the calling thread in
     // setDataSource for any significant time.
@@ -336,11 +424,36 @@ status_t AwesomePlayer::setDataSource_l(
     return OK;
 }
 
+void AwesomePlayer::printFileName(int fd) {
+
+    char symName[40] = {0};
+    char fileName[256] = {0};
+
+    snprintf(symName, sizeof(symName), "/proc/%d/fd/%d", getpid(), fd);
+
+    if (readlink( symName, fileName, (sizeof(fileName) - 1)) != -1 ) {
+        ALOGD("printFileName fd(%d) -> %s", fd, fileName);
+    }
+}
+
 status_t AwesomePlayer::setDataSource(
         int fd, int64_t offset, int64_t length) {
     Mutex::Autolock autoLock(mLock);
-
+    ALOGD("Before reset_l");
+    
     reset_l();
+
+    ExtendedStats::AutoProfile autoProfile(
+            STATS_PROFILE_SET_DATA_SOURCE, mPlayerExtendedStats);
+    PLAYER_STATS(profileStart, STATS_PROFILE_START_LATENCY);
+
+    if (fd) {
+       printFileName(fd);
+    }
+
+    if (fd) {
+        ExtendedUtils::printFileName(fd);
+    }
 
     sp<DataSource> dataSource = new FileSource(fd, offset, length);
 
@@ -460,6 +573,7 @@ status_t AwesomePlayer::setDataSource_l(const sp<MediaExtractor> &extractor) {
             if (success) {
                 mDisplayWidth = displayWidth;
                 mDisplayHeight = displayHeight;
+                PLAYER_STATS(logDimensions, displayWidth, displayHeight);
             }
 
             {
@@ -470,7 +584,8 @@ status_t AwesomePlayer::setDataSource_l(const sp<MediaExtractor> &extractor) {
                     &mStats.mTracks.editItemAt(mStats.mVideoTrackIndex);
                 stat->mMIME = mime.string();
             }
-        } else if (!haveAudio && !strncasecmp(mime.string(), "audio/", 6)) {
+        } else if (!haveAudio && !strncasecmp(mime.string(), "audio/", 6) &&
+                    !ExtendedUtils::ShellProp::isAudioDisabled(false)) {
             setAudioSource(extractor->getTrack(i));
             haveAudio = true;
             mActiveAudioTrackIndex = i;
@@ -593,6 +708,15 @@ void AwesomePlayer::reset_l() {
     delete mAudioPlayer;
     mAudioPlayer = NULL;
 
+#ifdef QCOM_DIRECTTRACK
+    if (mIsTunnelAudio) {
+        if(mTunnelAliveAP > 0) {
+            mTunnelAliveAP--;
+            ALOGV("mTunnelAliveAP from reset = %d", mTunnelAliveAP);
+        }
+    }
+    mIsTunnelAudio = false;
+#endif
     if (mTextDriver != NULL) {
         delete mTextDriver;
         mTextDriver = NULL;
@@ -600,11 +724,14 @@ void AwesomePlayer::reset_l() {
 
     mVideoRenderer.clear();
 
+    PLAYER_STATS(notifyEOS);
+    modifyFlags(PLAYING, CLEAR);
+    PLAYER_STATS(dump);
+    printStats();
     if (mVideoSource != NULL) {
         shutdownVideoDecoder_l();
     }
 
-    mDurationUs = -1;
     modifyFlags(0, ASSIGN);
     mExtractorFlags = 0;
     mTimeSourceDeltaUs = 0;
@@ -636,7 +763,23 @@ void AwesomePlayer::reset_l() {
         mStats.mVideoHeight = -1;
         mStats.mFlags = 0;
         mStats.mTracks.clear();
+        mStats.mConsecutiveFramesDropped = 0;
+        mStats.mCatchupTimeStart = 0;
+        mStats.mNumTimesSyncLoss = 0;
+        mStats.mMaxEarlyDelta = 0;
+        mStats.mMaxLateDelta = 0;
+        mStats.mMaxTimeSyncLoss = 0;
+        mStats.mTotalFrames = 0;
+        mStats.mLastFrameUs = 0;
+        mStats.mTotalTimeUs = 0;
+        mStats.mVeryFirstFrame = true;
+        mStats.mFirstFrameLatencyUs = 0;
+        mStats.mLastPausedTimeMs = 0;
+        mStats.mLastSeekToTimeMs = 0;
+        mStats.mResumeDelayStartUs = -1;
+        mStats.mSeekDelayStartUs = -1;
     }
+    PLAYER_STATS(reset);
 
     mWatchForAudioSeekComplete = false;
     mWatchForAudioEOS = false;
@@ -646,6 +789,10 @@ void AwesomePlayer::reset_l() {
 }
 
 void AwesomePlayer::notifyListener_l(int msg, int ext1, int ext2) {
+    if (msg == MEDIA_SEEK_COMPLETE) {
+        PLAYER_STATS(notifySeekDone);
+    }
+
     if ((mListener != NULL) && !mAudioTearDown) {
         sp<MediaPlayerBase> listener = mListener.promote();
 
@@ -706,16 +853,18 @@ void AwesomePlayer::onVideoLagUpdate() {
     }
     mVideoLagEventPending = false;
 
-    int64_t audioTimeUs = mAudioPlayer->getMediaTimeUs();
-    int64_t videoLateByUs = audioTimeUs - mVideoTimeUs;
+    if (!(mFlags & AUDIO_AT_EOS)) {
+        int64_t audioTimeUs = mAudioPlayer->getMediaTimeUs();
+        int64_t videoLateByUs = audioTimeUs - mVideoTimeUs;
 
-    if (!(mFlags & VIDEO_AT_EOS) && videoLateByUs > 300000ll) {
-        ALOGV("video late by %lld ms.", videoLateByUs / 1000ll);
+        if (!(mFlags & VIDEO_AT_EOS) && videoLateByUs > 300000ll) {
+            ALOGV("video late by %lld ms.", videoLateByUs / 1000ll);
 
-        notifyListener_l(
-                MEDIA_INFO,
-                MEDIA_INFO_VIDEO_TRACK_LAGGING,
-                videoLateByUs / 1000ll);
+            notifyListener_l(
+                    MEDIA_INFO,
+                    MEDIA_INFO_VIDEO_TRACK_LAGGING,
+                    videoLateByUs / 1000ll);
+        }
     }
 
     postVideoLagEvent_l();
@@ -775,6 +924,8 @@ void AwesomePlayer::onBufferingUpdate() {
                              kHighWaterMarkBytes);
                         finishAsyncPrepare_l();
                     }
+                } else if (mFlags & CACHE_UNDERRUN) {
+                    ensureCacheIsFetching_l();
                 }
             }
         }
@@ -830,6 +981,8 @@ void AwesomePlayer::onBufferingUpdate() {
                      cachedDurationUs / 1E6);
                 finishAsyncPrepare_l();
             }
+        } else if (mFlags & CACHE_UNDERRUN) {
+            ensureCacheIsFetching_l();
         }
     }
 
@@ -908,6 +1061,8 @@ void AwesomePlayer::onStreamDone() {
         }
     } else {
         ALOGV("MEDIA_PLAYBACK_COMPLETE");
+        PLAYER_STATS(notifyEOS);
+
         notifyListener_l(MEDIA_PLAYBACK_COMPLETE);
 
         mConsumeRights = true;
@@ -927,6 +1082,7 @@ void AwesomePlayer::onStreamDone() {
 
 status_t AwesomePlayer::play() {
     ATRACE_CALL();
+    PLAYER_STATS(notifyPlaying, true);
 
     Mutex::Autolock autoLock(mLock);
 
@@ -983,7 +1139,11 @@ status_t AwesomePlayer::play_l() {
             status_t err = startAudioPlayer_l(
                     false /* sendErrorNotification */);
 
+#ifndef QCOM_DIRECTTRACK
             if ((err != OK) && mOffloadAudio) {
+#else
+            if ((err != OK) && (mOffloadAudio || mIsTunnelAudio)) {
+#endif
                  err = fallbackToSWDecoder();
             }
 
@@ -1012,6 +1172,15 @@ status_t AwesomePlayer::play_l() {
 
     if (mTimeSource == NULL && mAudioPlayer == NULL) {
         mTimeSource = &mSystemTimeSource;
+    }
+
+    {
+        Mutex::Autolock autoLock(mStatsLock);
+        if (mStats.mVeryFirstFrame) {
+            mStats.mFirstFrameLatencyStartUs = getTimeOfDayUs();
+        } else {
+            mStats.mResumeDelayStartUs = getTimeOfDayUs();
+        }
     }
 
     if (mVideoSource != NULL) {
@@ -1061,6 +1230,15 @@ status_t AwesomePlayer::fallbackToSWDecoder() {
     }
     mAudioSource.clear();
     modifyFlags((AUDIO_RUNNING | AUDIOPLAYER_STARTED), CLEAR);
+#ifdef QCOM_DIRECTTRACK
+    if (mIsTunnelAudio) {
+        if(mTunnelAliveAP > 0) {
+            mTunnelAliveAP--;
+            ALOGV("mTunnelAliveAP from fallbackToSWDecoder = %d", mTunnelAliveAP);
+        }
+        mIsTunnelAudio = false;
+    }
+#endif
     mOffloadAudio = false;
     mAudioSource = mOmxSource;
     if (mAudioSource != NULL) {
@@ -1071,6 +1249,9 @@ status_t AwesomePlayer::fallbackToSWDecoder() {
             }
             createAudioPlayer_l();
             err = startAudioPlayer_l(false);
+        } else {
+            mAudioSource.clear();
+            mOmxSource.clear();
         }
     }
 
@@ -1082,7 +1263,13 @@ void AwesomePlayer::createAudioPlayer_l()
     uint32_t flags = 0;
     int64_t cachedDurationUs;
     bool eos;
-
+#ifdef QCOM_DIRECTTRACK
+    sp<MetaData> format = mAudioTrack->getFormat();
+    const char *mime;
+    bool success = format->findCString(kKeyMIMEType, &mime);
+    int tunnelObjectsAlive = 0;
+    CHECK(success);
+#endif
     if (mOffloadAudio) {
         flags |= AudioPlayer::USE_OFFLOAD;
     } else if (mVideoSource == NULL
@@ -1091,14 +1278,95 @@ void AwesomePlayer::createAudioPlayer_l()
             cachedDurationUs > AUDIO_SINK_MIN_DEEP_BUFFER_DURATION_US))) {
         flags |= AudioPlayer::ALLOW_DEEP_BUFFERING;
     }
-    if (isStreamingHTTP()) {
+    if (isStreamingHTTP() || isWidevineContent()) {
         flags |= AudioPlayer::IS_STREAMING;
     }
     if (mVideoSource != NULL) {
         flags |= AudioPlayer::HAS_VIDEO;
     }
+#ifdef QCOM_DIRECTTRACK
+#ifdef USE_TUNNEL_MODE
+    // Create tunnel player if tunnel mode is enabled
+    ALOGW("Trying to create tunnel player mIsTunnelAudio %d, \
+            LPAPlayer::objectsAlive %d, \
+            TunnelPlayer::mTunnelObjectsAlive = %d,\
+            (mAudioPlayer == NULL) %d",
+            mIsTunnelAudio, TunnelPlayer::mTunnelObjectsAlive,
+            LPAPlayer::mObjectsAlive,(mAudioPlayer == NULL));
 
+    if(mIsTunnelAudio && (mAudioPlayer == NULL) &&
+            (LPAPlayer::mObjectsAlive == 0) &&
+            (TunnelPlayer::mTunnelObjectsAlive == 0)) {
+        ALOGD("Tunnel player created for  mime %s duration %lld\n",\
+            mime, mDurationUs);
+        bool initCheck =  false;
+        if(mVideoSource != NULL) {
+            // The parameter true is to inform tunnel player that
+            // clip is audio video
+            mAudioPlayer = new TunnelPlayer(mAudioSink, initCheck,
+                    this, true);
+        }
+        else {
+            mAudioPlayer = new TunnelPlayer(mAudioSink, initCheck,
+                    this);
+        }
+        if(!initCheck) {
+            ALOGE("deleting Tunnel Player - initCheck failed");
+            delete mAudioPlayer;
+            mAudioPlayer = NULL;
+        }
+    }
+    tunnelObjectsAlive = (TunnelPlayer::mTunnelObjectsAlive);
+#endif
+    int32_t nchannels = 0;
+    if(mAudioTrack != NULL) {
+        sp<MetaData> format = mAudioTrack->getFormat();
+        if(format != NULL) {
+            format->findInt32( kKeyChannelCount, &nchannels );
+            ALOGV("nchannels %d;LPA will be skipped if nchannels is > 2 or nchannels == 0",nchannels);
+        }
+    }
+    char lpaDecode[PROPERTY_VALUE_MAX];
+    uint32_t minDurationForLPA = LPA_MIN_DURATION_USEC_DEFAULT;
+    char minUserDefDuration[PROPERTY_VALUE_MAX];
+    property_get("lpa.decode",lpaDecode,"0");
+    property_get("lpa.min_duration",minUserDefDuration,"LPA_MIN_DURATION_USEC_DEFAULT");
+    minDurationForLPA = atoi(minUserDefDuration);
+    if(minDurationForLPA < LPA_MIN_DURATION_USEC_ALLOWED) {
+        ALOGE("LPAPlayer::Clip duration setting of less than 30sec not supported, defaulting to 60sec");
+        if(mAudioPlayer == NULL) {
+            ALOGE("LPAPlayer::Clip duration setting of less than 30sec not supported, defaulting to 60sec");
+            minDurationForLPA = LPA_MIN_DURATION_USEC_DEFAULT;
+        }
+    }
+    if((strcmp("true",lpaDecode) == 0) && (mAudioPlayer == NULL) &&
+#ifdef USE_TUNNEL_MODE
+       (tunnelObjectsAlive < TunnelPlayer::getTunnelObjectsAliveMax()) &&
+#endif
+       (nchannels && (nchannels <= 2)))
+
+    {
+        ALOGI("LPAPlayer::getObjectsAlive() %d mDurationUs %lld minDurationForLPA %d",LPAPlayer::mObjectsAlive, mDurationUs, minDurationForLPA);
+        if ( mDurationUs > minDurationForLPA
+             && (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_MPEG) || !strcasecmp(mime,MEDIA_MIMETYPE_AUDIO_AAC))
+             && LPAPlayer::mObjectsAlive == 0 && mVideoSource == NULL) {
+            ALOGI("LPAPlayer created, LPA MODE detected mime %s duration %lld", mime, mDurationUs);
+            bool initCheck =  false;
+            mAudioPlayer = new LPAPlayer(mAudioSink, initCheck, this);
+            if(!initCheck) {
+                 ALOGE("deleting Tunnel Player - initCheck failed");
+                 delete mAudioPlayer;
+                 mAudioPlayer = NULL;
+            }
+        }
+    }
+    if(mAudioPlayer == NULL) {
+        ALOGV("AudioPlayer created, Non-LPA mode mime %s duration %lld\n", mime, mDurationUs);
+        mAudioPlayer = new AudioPlayer(mAudioSink, flags, this);
+    }
+#else
     mAudioPlayer = new AudioPlayer(mAudioSink, flags, this);
+#endif
     mAudioPlayer->setSource(mAudioSource);
 
     mTimeSource = mAudioPlayer;
@@ -1264,6 +1532,7 @@ void AwesomePlayer::initRenderer_l() {
     setVideoScalingMode_l(mVideoScalingMode);
     if (USE_SURFACE_ALLOC
             && !strncmp(component, "OMX.", 4)
+            && strncmp(component, "OMX.ffmpeg.", 11)
             && strncmp(component, "OMX.google.", 11)) {
         // Hardware decoders avoid the CPU color conversion by decoding
         // directly to ANativeBuffers, so we must use a renderer that
@@ -1283,6 +1552,8 @@ void AwesomePlayer::initRenderer_l() {
 
 status_t AwesomePlayer::pause() {
     ATRACE_CALL();
+    PLAYER_STATS(notifyPause, mVideoTimeUs/1000);
+    ExtendedStats::AutoProfile autoProfile(STATS_PROFILE_PAUSE, mPlayerExtendedStats);
 
     Mutex::Autolock autoLock(mLock);
 
@@ -1332,6 +1603,12 @@ status_t AwesomePlayer::pause_l(bool at_eos) {
     if (mDecryptHandle != NULL) {
         mDrmManagerClient->setPlaybackStatus(mDecryptHandle,
                 Playback::PAUSE, 0);
+    }
+
+    if(!(mFlags & VIDEO_AT_EOS)){
+        Mutex::Autolock autoLock(mStatsLock);
+        mStats.mLastPausedTimeMs = mVideoTimeUs/1000;
+        printStats();
     }
 
     uint32_t params = IMediaPlayerService::kBatteryDataTrackDecoder;
@@ -1387,6 +1664,9 @@ void AwesomePlayer::shutdownVideoDecoder_l() {
 status_t AwesomePlayer::setNativeWindow_l(const sp<ANativeWindow> &native) {
     mNativeWindow = native;
 
+    mQueue.cancelEvent(mCheckAudioStatusEvent->eventID());
+    mAudioStatusEventPending = false;
+
     if (mVideoSource == NULL) {
         return OK;
     }
@@ -1408,6 +1688,7 @@ status_t AwesomePlayer::setNativeWindow_l(const sp<ANativeWindow> &native) {
     }
 
     if (mLastVideoTimeUs >= 0) {
+        mWatchForAudioSeekComplete = false;
         mSeeking = SEEK;
         mSeekTimeUs = mLastVideoTimeUs;
         modifyFlags((AT_EOS | AUDIO_AT_EOS | VIDEO_AT_EOS), CLEAR);
@@ -1467,7 +1748,7 @@ status_t AwesomePlayer::getPosition(int64_t *positionUs) {
             *positionUs = mAudioTearDownPosition;
         }
     } else {
-        *positionUs = 0;
+        *positionUs = mAudioTearDownPosition;
     }
     return OK;
 }
@@ -1475,9 +1756,16 @@ status_t AwesomePlayer::getPosition(int64_t *positionUs) {
 status_t AwesomePlayer::seekTo(int64_t timeUs) {
     ATRACE_CALL();
 
+    ExtendedStats::AutoProfile autoProfile(STATS_PROFILE_SEEK, mPlayerExtendedStats);
+    PLAYER_STATS(notifySeek, timeUs);
+
     if (mExtractorFlags & MediaExtractor::CAN_SEEK) {
         Mutex::Autolock autoLock(mLock);
         return seekTo_l(timeUs);
+    } else {
+        ALOGV("Extractor cannot seek, post seek complete");
+        Mutex::Autolock autoLock(mLock);
+        notifyListener_l(MEDIA_SEEK_COMPLETE);
     }
 
     return OK;
@@ -1498,6 +1786,11 @@ status_t AwesomePlayer::seekTo_l(int64_t timeUs) {
     }
 
     mSeeking = SEEK;
+
+    {
+        Mutex::Autolock autoLock(mStatsLock);
+        mStats.mSeekDelayStartUs = getTimeOfDayUs();
+    }
     mSeekNotificationSent = false;
     mSeekTimeUs = timeUs;
     modifyFlags((AT_EOS | AUDIO_AT_EOS | VIDEO_AT_EOS), CLEAR);
@@ -1568,6 +1861,11 @@ status_t AwesomePlayer::initAudioDecoder() {
     ATRACE_CALL();
 
     sp<MetaData> meta = mAudioTrack->getFormat();
+    sp<MetaData> vMeta;
+    status_t err;
+    if (mVideoTrack != NULL && mVideoSource != NULL) {
+        vMeta = mVideoTrack->getFormat();
+    }
 
     const char *mime;
     CHECK(meta->findCString(kKeyMIMEType, &mime));
@@ -1580,9 +1878,137 @@ status_t AwesomePlayer::initAudioDecoder() {
         streamType = mAudioSink->getAudioStreamType();
     }
 
-    mOffloadAudio = canOffloadStream(meta, (mVideoSource != NULL),
-                                     isStreamingHTTP(), streamType);
+    mOffloadAudio = canOffloadStream(meta, (mVideoSource != NULL), vMeta,
+                                     (isStreamingHTTP() || isWidevineContent()),
+                                    streamType);
+#ifdef QCOM_DIRECTTRACK
+    int32_t nchannels = 0;
+    int32_t isADTS = 0;
+    meta->findInt32( kKeyChannelCount, &nchannels );
+    meta->findInt32(kKeyIsADTS, &isADTS);
+    if (isADTS == 1) {
+        ALOGV("Widevine content\n");
+    }
 
+    ALOGV("nchannels %d;LPA will be skipped if nchannels is > 2 or nchannels == 0",
+           nchannels);
+#ifdef USE_TUNNEL_MODE
+    char tunnelDecode[PROPERTY_VALUE_MAX];
+    property_get("tunnel.decode",tunnelDecode,"0");
+    // Enable tunnel mode for mp3 and aac and if the clip is not aac adif
+    // and if no other tunnel mode instances aare running.
+    ALOGD("Tunnel Mime Type: %s, object alive = %d, mTunnelAliveAP = %d",\
+            mime, (TunnelPlayer::mTunnelObjectsAlive), mTunnelAliveAP);
+
+    bool sys_prop_enabled = !strcmp("true",tunnelDecode) || atoi(tunnelDecode);
+    ALOGD("maxPossible tunnels = %d", TunnelPlayer::getTunnelObjectsAliveMax());
+    //widevine will fallback to software decoder
+    if (sys_prop_enabled && (TunnelPlayer::mTunnelObjectsAlive < TunnelPlayer::getTunnelObjectsAliveMax()) &&
+       (mTunnelAliveAP < TunnelPlayer::getTunnelObjectsAliveMax()) && (isADTS == 0) &&
+        mAudioSink->realtime() &&
+        inSupportedTunnelFormats(mime)) {
+
+        if (mVideoSource != NULL) {
+           char tunnelAVDecode[PROPERTY_VALUE_MAX];
+           property_get("tunnel.audiovideo.decode",tunnelAVDecode,"0");
+           sys_prop_enabled = !strncmp("true", tunnelAVDecode, 4) || atoi(tunnelAVDecode);
+           if (sys_prop_enabled) {
+               ALOGD("Enable Tunnel Mode for A-V playback");
+               mIsTunnelAudio = true;
+           }
+        }
+        else {
+            ALOGI("Tunnel Mode Audio Enabled");
+            mIsTunnelAudio = true;
+        }
+#ifdef NO_TUNNEL_MODE_FOR_MULTICHANNEL
+        if (nchannels > 2 || nchannels <= 0) {
+            ALOGD("Use tunnel mode only for mono and stereo channels");
+            mIsTunnelAudio = false;
+        }
+#endif
+    }
+    else
+       ALOGD("Normal Audio Playback");
+#endif
+
+    checkTunnelExceptions();
+
+    if (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_RAW)) {
+        ALOGD("Set Audio Track as Audio Source");
+        mAudioSource = mAudioTrack;
+        // For PCM offload fallback
+        if (mOffloadAudio) {
+            mOmxSource = mAudioSource;
+        }
+    } else {
+        // If offloading we still create a OMX decoder as a fall-back
+        // but we don't start it
+        mAudioTrack->getFormat()->setPointer(ExtendedStats::MEDIA_STATS_FLAG, mPlayerExtendedStats.get());
+
+        // For LPA Playback use the decoder without OMX layer
+        char *matchComponentName = NULL;
+        uint32_t flags = 0;
+        if (mIsTunnelAudio
+#ifdef USE_TUNNEL_MODE
+             && (mTunnelAliveAP < TunnelPlayer::getTunnelObjectsAliveMax())
+#endif
+    )   {
+        ALOGD("Set Audio Track as Audio Source");
+        mTunnelAliveAP++;
+        ALOGV("createAudioPlayer: bypass OMX (raw)");
+        mAudioSource = mAudioTrack;
+        } else {
+        // For LPA Playback use the decoder without OMX layer
+        int64_t durationUs;
+        char lpaDecode[128];
+        uint32_t minDurationForLPA = LPA_MIN_DURATION_USEC_DEFAULT;
+        char minUserDefDuration[PROPERTY_VALUE_MAX];
+        property_get("lpa.decode",lpaDecode,"0");
+        property_get("lpa.min_duration",minUserDefDuration,"LPA_MIN_DURATION_USEC_DEFAULT");
+        minDurationForLPA = atoi(minUserDefDuration);
+        if(minDurationForLPA < LPA_MIN_DURATION_USEC_ALLOWED) {
+            ALOGE("LPAPlayer::Clip duration setting of less than 30sec not supported, defaulting to 60sec");
+            minDurationForLPA = LPA_MIN_DURATION_USEC_DEFAULT;
+        }
+        if (mAudioTrack->getFormat()->findInt64(kKeyDuration, &durationUs)) {
+            Mutex::Autolock autoLock(mMiscStateLock);
+            if (mDurationUs < 0 || durationUs > mDurationUs) {
+                mDurationUs = durationUs;
+            }
+        }
+        if ( mDurationUs > minDurationForLPA
+             && (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_MPEG) || !strcasecmp(mime,MEDIA_MIMETYPE_AUDIO_AAC))
+             && LPAPlayer::mObjectsAlive == 0 && mVideoSource == NULL && (strcmp("true",lpaDecode) == 0)
+             && (nchannels && (nchannels <= 2)) ) {
+            char nonOMXDecoder[128];
+            if(!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_MPEG)) {
+                ALOGD("matchComponentName is set to MP3Decoder %lld, mime %s",mDurationUs,mime);
+                property_get("use.non-omx.mp3.decoder",nonOMXDecoder,"0");
+                if((strcmp("true",nonOMXDecoder) == 0)) {
+                    matchComponentName = (char *) "MP3Decoder";
+                }
+            } else if((!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_AAC))) {
+                ALOGD("matchComponentName is set to AACDecoder %lld, mime %s",mDurationUs,mime);
+                property_get("use.non-omx.aac.decoder",nonOMXDecoder,"0");
+               if((strcmp("true",nonOMXDecoder) == 0)) {
+                    matchComponentName = (char *) "AACDecoder";
+                } else {
+                    matchComponentName = (char *) "OMX.google.aac.decoder";
+                }
+            }
+            flags |= OMXCodec::kSoftwareCodecsOnly;
+        }
+        }
+        mOmxSource = OMXCodec::Create(
+                mClient.interface(), mAudioTrack->getFormat(),
+                false, // createEncoder
+                mAudioTrack, matchComponentName, flags,NULL);
+
+        if(!mIsTunnelAudio) {
+           mAudioSource = mOmxSource;
+        }
+#else
     if (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_RAW)) {
         ALOGV("createAudioPlayer: bypass OMX (raw)");
         mAudioSource = mAudioTrack;
@@ -1597,16 +2023,33 @@ status_t AwesomePlayer::initAudioDecoder() {
                 mClient.interface(), mAudioTrack->getFormat(),
                 false, // createEncoder
                 mAudioTrack);
+#endif
 
         if (mOffloadAudio) {
             ALOGV("createAudioPlayer: bypass OMX (offload)");
             mAudioSource = mAudioTrack;
+#ifndef QCOM_DIRECTTRACK
         } else {
             mAudioSource = mOmxSource;
+#endif
         }
     }
 
     int64_t durationUs = -1;
+    mAudioTrack->getFormat()->findInt64(kKeyDuration, &durationUs);
+
+    if (!mOffloadAudio && mAudioSource != NULL
+            && !ExtendedUtils::pcmOffloadException(mime)) {
+        //do not offload evrc, qcelp, amr
+        ALOGI("Could not offload audio decode, try pcm offload");
+        sp<MetaData> format = mAudioSource->getFormat();
+        if (durationUs >= 0) {
+            format->setInt64(kKeyDuration, durationUs);
+        }
+        mOffloadAudio = canOffloadStream(format, (mVideoSource != NULL), vMeta,
+                                     (isStreamingHTTP() || isWidevineContent()), streamType);
+    }
+
     mAudioTrack->getFormat()->findInt64(kKeyDuration, &durationUs);
 
     if (!mOffloadAudio && mAudioSource != NULL) {
@@ -1627,13 +2070,19 @@ status_t AwesomePlayer::initAudioDecoder() {
             }
         }
 
-        status_t err = mAudioSource->start();
+    sp<MetaData> tempMetadata;
+    if (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_RAW)) {
+        tempMetadata = ExtendedUtils::updatePCMFormatAndBitwidth(mAudioSource,
+                                                                mOffloadAudio);
+    }
+    err = mAudioSource->start(tempMetadata.get());
+    tempMetadata.clear();
 
-        if (err != OK) {
-            mAudioSource.clear();
-            mOmxSource.clear();
-            return err;
-        }
+    if (err != OK) {
+        mAudioSource.clear();
+        mOmxSource.clear();
+        return err;
+    }
     } else if (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_QCELP)) {
         // For legacy reasons we're simply going to ignore the absence
         // of an audio decoder for QCELP instead of aborting playback
@@ -1661,6 +2110,17 @@ void AwesomePlayer::setVideoSource(sp<MediaSource> source) {
 
     mVideoTrack = source;
 }
+
+#ifdef MTK_HARDWARE
+void AwesomePlayer::mtk_omx_get_current_time(int64_t* pReal_time) {
+    if((mFlags & FIRST_FRAME) || mSeeking == SEEK) {
+            *pReal_time = -1;
+    } else {
+            *pReal_time = mAVSyncTimeUs;
+    }
+
+}
+#endif
 
 status_t AwesomePlayer::initVideoDecoder(uint32_t flags) {
     ATRACE_CALL();
@@ -1709,7 +2169,26 @@ status_t AwesomePlayer::initVideoDecoder(uint32_t flags) {
         flags |= OMXCodec::kEnableGrallocUsageProtected;
     }
 #endif
+
+    {
+        char value[PROPERTY_VALUE_MAX];
+        property_get("sys.media.vdec.sw", value, "0");
+        if (atoi(value)) {
+            ALOGI("Software Codec is preferred for Video");
+            flags |= OMXCodec::kPreferSoftwareCodecs;
+        }
+
+        mDropFramesDisable = false;
+        property_get("sys.media.vdec.drop", value, "1");
+        if (!atoi(value)) {
+            ALOGI("Don't drop frame even if late");
+            mDropFramesDisable = true;
+        }
+    }
+
     ALOGV("initVideoDecoder flags=0x%x", flags);
+
+    mVideoTrack->getFormat()->setPointer(ExtendedStats::MEDIA_STATS_FLAG, mPlayerExtendedStats.get());
     mVideoSource = OMXCodec::Create(
             mClient.interface(), mVideoTrack->getFormat(),
             false, // createEncoder
@@ -1765,6 +2244,12 @@ status_t AwesomePlayer::initVideoDecoder(uint32_t flags) {
 
 void AwesomePlayer::finishSeekIfNecessary(int64_t videoTimeUs) {
     ATRACE_CALL();
+    if (mSeeking != NO_SEEK)
+    {
+        Mutex::Autolock autoLock(mStatsLock);
+        mStats.mLastSeekToTimeMs = mSeekTimeUs/1000;
+        printStats();
+    }
 
     if (mSeeking == SEEK_VIDEO_ONLY) {
         mSeeking = NO_SEEK;
@@ -1810,6 +2295,12 @@ void AwesomePlayer::finishSeekIfNecessary(int64_t videoTimeUs) {
         mDrmManagerClient->setPlaybackStatus(mDecryptHandle,
                 Playback::START, videoTimeUs / 1000);
     }
+
+    {
+        Mutex::Autolock autoLock(mStatsLock);
+        mStats.mLastSeekToTimeMs = mSeekTimeUs/1000;
+        printStats();
+    }
 }
 
 void AwesomePlayer::onVideoEvent() {
@@ -1822,14 +2313,22 @@ void AwesomePlayer::onVideoEvent() {
     }
     mVideoEventPending = false;
 
+    {
+        Mutex::Autolock autoLock(mStatsLock);
+        if(!mStats.mVeryFirstFrame && mSeeking == NO_SEEK){
+            mStats.mTotalTimeUs += getTimeOfDayUs() - mStats.mLastFrameUs;
+        }
+        mStats.mLastFrameUs = getTimeOfDayUs();
+    }
+
     if (mSeeking != NO_SEEK) {
         if (mVideoBuffer) {
             mVideoBuffer->release();
             mVideoBuffer = NULL;
         }
 
-        if (mSeeking == SEEK && isStreamingHTTP() && mAudioSource != NULL
-                && !(mFlags & SEEK_PREVIEW)) {
+        if (mSeeking == SEEK && (isStreamingHTTP() || mOffloadAudio)
+                && mAudioSource != NULL && !(mFlags & SEEK_PREVIEW)) {
             // We're going to seek the video source first, followed by
             // the audio source.
             // In order to avoid jumps in the DataSource offset caused by
@@ -1852,11 +2351,18 @@ void AwesomePlayer::onVideoEvent() {
         if (mSeeking != NO_SEEK) {
             ALOGV("seeking to %" PRId64 " us (%.2f secs)", mSeekTimeUs, mSeekTimeUs / 1E6);
 
+            MediaSource::ReadOptions::SeekMode seekmode = (mSeeking == SEEK_VIDEO_ONLY)
+                                                          ? MediaSource::ReadOptions::SEEK_NEXT_SYNC
+                                                          : MediaSource::ReadOptions::SEEK_CLOSEST_SYNC;
+            // Seek to the next key-frame after resume for http streaming
+            if (mCachedSource != NULL && mIsFirstFrameAfterResume) {
+                seekmode = MediaSource::ReadOptions::SEEK_NEXT_SYNC;
+                mIsFirstFrameAfterResume = false;
+            }
+
             options.setSeekTo(
                     mSeekTimeUs,
-                    mSeeking == SEEK_VIDEO_ONLY
-                        ? MediaSource::ReadOptions::SEEK_NEXT_SYNC
-                        : MediaSource::ReadOptions::SEEK_CLOSEST_SYNC);
+                    seekmode);
         }
         for (;;) {
             status_t err = mVideoSource->read(&mVideoBuffer, &options);
@@ -1972,30 +2478,40 @@ void AwesomePlayer::onVideoEvent() {
     TimeSource *ts =
         ((mFlags & AUDIO_AT_EOS) || !(mFlags & AUDIOPLAYER_STARTED))
             ? &mSystemTimeSource : mTimeSource;
-    int64_t systemTimeUs = mSystemTimeSource.getRealTimeUs();
     int64_t looperTimeUs = ALooper::GetNowUs();
 
     if (mFlags & FIRST_FRAME) {
+        PLAYER_STATS(profileStop, STATS_PROFILE_START_LATENCY);
+        PLAYER_STATS(profileStop, STATS_PROFILE_FIRST_BUFFER(true) /* video */);
+
         modifyFlags(FIRST_FRAME, CLEAR);
         mSinceLastDropped = 0;
-        mClockEstimator->reset();
-        mTimeSourceDeltaUs = estimateRealTimeUs(ts, systemTimeUs) - timeUs;
+        mTimeSourceDeltaUs = ts->getRealTimeUs() - timeUs;
+
+        {
+            Mutex::Autolock autoLock(mStatsLock);
+            if(mStats.mVeryFirstFrame){
+                logFirstFrame();
+                printStats();
+                mStats.mLastFrameUs = getTimeOfDayUs();
+            }
+        }
     }
 
-    int64_t realTimeUs, mediaTimeUs;
+    int64_t realTimeUs, mediaTimeUs, nowUs = 0, latenessUs = 0;
     if (!(mFlags & AUDIO_AT_EOS) && mAudioPlayer != NULL
         && mAudioPlayer->getMediaTimeMapping(&realTimeUs, &mediaTimeUs)) {
-        ALOGV("updating TSdelta (%" PRId64 " => %" PRId64 " change %" PRId64 ")",
-              mTimeSourceDeltaUs, realTimeUs - mediaTimeUs,
-              mTimeSourceDeltaUs - (realTimeUs - mediaTimeUs));
-        ATRACE_INT("TS delta change (ms)", (mTimeSourceDeltaUs - (realTimeUs - mediaTimeUs)) / 1E3);
         mTimeSourceDeltaUs = realTimeUs - mediaTimeUs;
     }
 
     if (wasSeeking == SEEK_VIDEO_ONLY) {
-        int64_t nowUs = estimateRealTimeUs(ts, systemTimeUs) - mTimeSourceDeltaUs;
+        nowUs = ts->getRealTimeUs() - mTimeSourceDeltaUs;
 
-        int64_t latenessUs = nowUs - timeUs;
+        latenessUs = nowUs - timeUs;
+#ifdef MTK_HARDWARE
+        mAVSyncTimeUs = nowUs;
+#endif
+
 
         ATRACE_INT("Video Lateness (ms)", latenessUs / 1E3);
 
@@ -2004,17 +2520,22 @@ void AwesomePlayer::onVideoEvent() {
         }
     }
 
-    int64_t latenessUs = 0;
+    latenessUs = 0;
     if (wasSeeking == NO_SEEK) {
         // Let's display the first frame after seeking right away.
 
-        int64_t nowUs = estimateRealTimeUs(ts, systemTimeUs) - mTimeSourceDeltaUs;
+        nowUs = ts->getRealTimeUs() - mTimeSourceDeltaUs;
 
         latenessUs = nowUs - timeUs;
 
-        ATRACE_INT("Video Lateness (ms)", latenessUs / 1E3);
+        if (latenessUs >= 0) {
+            ATRACE_INT("Video Lateness (ms)", latenessUs / 1E3);
+        } else {
+            ATRACE_INT("Video Earlyness (ms)", -latenessUs / 1E3);
+        }
 
         if (latenessUs > 500000ll
+                && !(mFlags & AUDIO_AT_EOS)
                 && mAudioPlayer != NULL
                 && mAudioPlayer->getMediaTimeMapping(
                     &realTimeUs, &mediaTimeUs)) {
@@ -2043,8 +2564,9 @@ void AwesomePlayer::onVideoEvent() {
             ALOGV("we're late by %" PRId64 " us (%.2f secs)",
                  latenessUs, latenessUs / 1E6);
 
-            if (!(mFlags & SLOW_DECODER_HACK)
+            if ((!(mFlags & SLOW_DECODER_HACK)
                     || mSinceLastDropped > FRAME_DROP_FREQ)
+                    && !mDropFramesDisable)
             {
                 ALOGV("we're late by %" PRId64 " us (%.2f secs) dropping "
                      "one after %d frames",
@@ -2056,7 +2578,13 @@ void AwesomePlayer::onVideoEvent() {
 
                 {
                     Mutex::Autolock autoLock(mStatsLock);
+                    PLAYER_STATS(logFrameDropped);
                     ++mStats.mNumVideoFramesDropped;
+                    mStats.mConsecutiveFramesDropped++;
+                    if (mStats.mConsecutiveFramesDropped == 1){
+                        mStats.mCatchupTimeStart = mTimeSource->getRealTimeUs();
+                    }
+                    if(!(mFlags & AT_EOS)) logLate(timeUs,nowUs,latenessUs);
                 }
 
                 postVideoEvent_l(0);
@@ -2064,9 +2592,23 @@ void AwesomePlayer::onVideoEvent() {
             }
         }
 
-        if (latenessUs < -30000) {
-            // We're more than 30ms early, schedule at most 20 ms before time due
-            postVideoEvent_l(latenessUs < -60000 ? 30000 : -latenessUs - 20000);
+        // Queueing early-frames helps absorb scheduling jitters and is desirable
+        // for high-framerate content. However, for sub-30fps, this simply
+        // seems to increase display-updates. Queue early selectively for >30fps
+        int64_t earlyRescheduleOffset = (mVideoFrameDeltaUs > 30000) ? -10000 : -30000;
+        if (latenessUs < earlyRescheduleOffset) {
+
+            logOnTime(timeUs,nowUs,latenessUs);
+            {
+                Mutex::Autolock autoLock(mStatsLock);
+                mStats.mConsecutiveFramesDropped = 0;
+            }
+            if (mVideoFrameDeltaUs > 30000) {
+                // We're more than 30ms early, schedule at most 20 ms before time due
+                postVideoEvent_l(latenessUs < -60000 ? 30000 : -latenessUs - 20000);
+            } else {
+                postVideoEvent_l(latenessUs < -22000 ? 10000 : -latenessUs);
+            }
             return;
         }
     }
@@ -2090,6 +2632,28 @@ void AwesomePlayer::onVideoEvent() {
 
         if (mFlags & PLAYING) {
             notifyIfMediaStarted_l();
+        }
+
+        {
+            Mutex::Autolock autoLock(mStatsLock);
+            logOnTime(timeUs,nowUs,latenessUs);
+            mStats.mTotalFrames++;
+            PLAYER_STATS(logFrameRendered);
+            mStats.mConsecutiveFramesDropped = 0;
+            char value[PROPERTY_VALUE_MAX];
+            property_get("persist.debug.sf.statistics", value, "0");
+            if (atoi(value) && mVideoSource != NULL) {
+                if (mStats.mResumeDelayStartUs > 0) {
+                    printStats();
+                    ALOGI("Resume Latency = %lld us", getTimeOfDayUs() - mStats.mResumeDelayStartUs);
+                    mStats.mResumeDelayStartUs = -1;
+                }
+                if (mStats.mSeekDelayStartUs > 0) {
+                    printStats();
+                    ALOGI("Seek Latency = %lld us", getTimeOfDayUs() - mStats.mSeekDelayStartUs);
+                    mStats.mSeekDelayStartUs = -1;
+                }
+            }
         }
     }
 
@@ -2131,24 +2695,17 @@ void AwesomePlayer::onVideoEvent() {
 
         int64_t nextTimeUs;
         CHECK(mVideoBuffer->meta_data()->findInt64(kKeyTime, &nextTimeUs));
-        systemTimeUs = mSystemTimeSource.getRealTimeUs();
-        int64_t delayUs = nextTimeUs - estimateRealTimeUs(ts, systemTimeUs) + mTimeSourceDeltaUs;
+        int64_t delayUs = nextTimeUs - ts->getRealTimeUs() + mTimeSourceDeltaUs;
+        mVideoFrameDeltaUs = nextTimeUs - timeUs;
         ATRACE_INT("Frame delta (ms)", (nextTimeUs - timeUs) / 1E3);
         ALOGV("next frame in %" PRId64, delayUs);
         // try to schedule 30ms before time due
         postVideoEvent_l(delayUs > 60000 ? 30000 : (delayUs < 30000 ? 0 : delayUs - 30000));
+        ATRACE_INT("Video postDelay", delayUs < 0 ? 1 : delayUs);
         return;
     }
 
     postVideoEvent_l();
-}
-
-int64_t AwesomePlayer::estimateRealTimeUs(TimeSource *ts, int64_t systemTimeUs) {
-    if (ts == &mSystemTimeSource) {
-        return systemTimeUs;
-    } else {
-        return (int64_t)mClockEstimator->estimate(systemTimeUs, ts->getRealTimeUs());
-    }
 }
 
 void AwesomePlayer::postVideoEvent_l(int64_t delayUs) {
@@ -2537,6 +3094,7 @@ void AwesomePlayer::onPrepareAsyncEvent() {
 }
 
 void AwesomePlayer::beginPrepareAsync_l() {
+    ExtendedStats::AutoProfile autoProfile(STATS_PROFILE_PREPARE, mPlayerExtendedStats);
     if (mFlags & PREPARE_CANCELLED) {
         ALOGI("prepare was cancelled before doing anything");
         abortPrepare(UNKNOWN_ERROR);
@@ -2962,6 +3520,22 @@ bool AwesomePlayer::isStreamingHTTP() const {
     return mCachedSource != NULL || mWVMExtractor != NULL;
 }
 
+bool AwesomePlayer::isWidevineContent() const {
+    if (mWVMExtractor != NULL) {
+        return true;
+    }
+
+    sp<MetaData> fileMeta = mExtractor->getMetaData();
+    const char *containerMime;
+    if (fileMeta != NULL &&
+        fileMeta->findCString(kKeyMIMEType, &containerMime) &&
+        !strcasecmp(containerMime, "video/wvm")) {
+       return true;
+    }
+
+    return false;
+}
+
 status_t AwesomePlayer::dump(
         int fd, const Vector<String16> & /* args */) const {
     Mutex::Autolock autoLock(mStatsLock);
@@ -2997,13 +3571,33 @@ status_t AwesomePlayer::dump(
 
         if ((ssize_t)i == mStats.mVideoTrackIndex) {
             fprintf(out,
-                    "   videoDimensions(%d x %d), "
-                    "numVideoFramesDecoded(%" PRId64 "), "
-                    "numVideoFramesDropped(%" PRId64 ")\n",
+                    "videoDimensions(%d x %d)\n"
+                    "Total Video Frames Decoded(%" PRId64 ")\n"
+                    "Total Video Frames Rendered(%" PRId64 ")\n"
+                    "Total Playback Duration(%" PRId64 " ms)\n"
+                    "numVideoFramesDropped(%" PRId64 ")\n"
+                    "Average Frames Per Second(%.4f)\n"
+                    "First Frame Latency (%" PRId64 " ms)\n"
+                    "Number of times AV Sync Lost(%u)\n"
+                    "Max Video Ahead Time Delta(%u)\n"
+                    "Max Video Behind Time Delta(%u)\n"
+                    "Max Time Sync Loss(%u)\n"
+                    "EOS(%d)\n"
+                    "PLAYING(%d)\n",
                     mStats.mVideoWidth,
                     mStats.mVideoHeight,
                     mStats.mNumVideoFramesDecoded,
-                    mStats.mNumVideoFramesDropped);
+                    mStats.mTotalFrames,
+                    mStats.mTotalTimeUs/1000,
+                    mStats.mNumVideoFramesDropped,
+                    ((double)(mStats.mTotalFrames)*1E6)/((double)mStats.mTotalTimeUs),
+                    mStats.mFirstFrameLatencyUs/1000,
+                    mStats.mNumTimesSyncLoss,
+                    -mStats.mMaxEarlyDelta/1000,
+                    mStats.mMaxLateDelta/1000,
+                    mStats.mMaxTimeSyncLoss/1000,
+                    (mFlags & AT_EOS) > 0,
+                    (mFlags & PLAYING) > 0);
         }
     }
 
@@ -3090,5 +3684,235 @@ void AwesomePlayer::onAudioTearDownEvent() {
     // Call prepare for the host decoding
     beginPrepareAsync_l();
 }
+
+inline void AwesomePlayer::logFirstFrame() {
+    mStats.mFirstFrameLatencyUs = getTimeOfDayUs()-mStats.mFirstFrameLatencyStartUs;
+    mStats.mVeryFirstFrame = false;
+}
+
+inline void AwesomePlayer::logCatchUp(int64_t ts, int64_t clock, int64_t delta)
+{
+    (void)delta;
+    if (mStats.mConsecutiveFramesDropped > 0) {
+        mStats.mNumTimesSyncLoss++;
+        if (mStats.mMaxTimeSyncLoss < (clock - mStats.mCatchupTimeStart) && clock > 0 && ts > 0) {
+            mStats.mMaxTimeSyncLoss = clock - mStats.mCatchupTimeStart;
+        }
+    }
+}
+
+inline void AwesomePlayer::logLate(int64_t ts, int64_t clock, int64_t delta)
+{
+    if (mStats.mMaxLateDelta < delta && clock > 0 && ts > 0) {
+        mStats.mMaxLateDelta = delta;
+    }
+}
+
+inline void AwesomePlayer::logOnTime(int64_t ts, int64_t clock, int64_t delta)
+{
+    bool needLogLate = false;
+    logCatchUp(ts, clock, delta);
+    if (delta <= 0) {
+        if ((-delta) > (-mStats.mMaxEarlyDelta) && clock > 0 && ts > 0) {
+            mStats.mMaxEarlyDelta = delta;
+        }
+    }
+    else {
+        needLogLate = true;
+    }
+
+    if(needLogLate) logLate(ts, clock, delta);
+}
+
+inline int64_t AwesomePlayer::getTimeOfDayUs() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+
+    return (int64_t)tv.tv_sec * 1000000 + tv.tv_usec;
+}
+
+// suspend() will release the decoders, the renderers and the buffers allocated for decoders
+// Releasing decoders eliminates draining power in suspended state.
+status_t AwesomePlayer::suspend() {
+    ALOGV("suspend()");
+    {
+        Mutex::Autolock autoLock(mLock);
+
+        // Set PAUSE to DrmManagerClient which will be set START in play_l()
+        if (mDecryptHandle != NULL) {
+            mDrmManagerClient->setPlaybackStatus(mDecryptHandle,
+                        Playback::PAUSE, 0);
+        }
+
+        cancelPlayerEvents();
+    }
+
+    if (mQueueStarted) {
+        mQueue.stop();
+        mQueueStarted = false;
+    }
+
+    {
+        Mutex::Autolock autoLock(mLock);
+        // Shutdown audio decoder first
+        if ((mAudioPlayer == NULL || !(mFlags & AUDIOPLAYER_STARTED))
+                && mAudioSource != NULL) {
+            mAudioSource->stop();
+        }
+        mAudioSource.clear();
+        mOmxSource.clear();
+        delete mAudioPlayer;
+        mAudioPlayer = NULL;
+        modifyFlags(AUDIO_RUNNING | AUDIOPLAYER_STARTED, CLEAR);
+
+        // Shutdown the video decoder
+        mVideoRenderer.clear();
+        PLAYER_STATS(notifyEOS);
+        printStats();
+        if (mVideoSource != NULL) {
+            shutdownVideoDecoder_l();
+        }
+        modifyFlags(PLAYING, CLEAR);
+        mVideoRenderingStarted = false;
+
+        // Disconnect the source
+        if (mCachedSource != NULL) {
+            status_t err = mCachedSource->disconnectWhileSuspend();
+            if (err != OK) {
+                return err;
+            }
+        }
+    }
+
+    return OK;
+}
+
+status_t AwesomePlayer::resume() {
+    ALOGV("resume()");
+    PLAYER_STATS(notifyPlaying, true);
+    ExtendedStats::AutoProfile autoProfile(STATS_PROFILE_RESUME, mPlayerExtendedStats);
+
+    Mutex::Autolock autoLock(mLock);
+
+    // Reconnect the source
+    status_t err = mCachedSource->connectWhileResume();
+
+    if (mVideoTrack != NULL && mVideoSource == NULL) {
+        status_t err = initVideoDecoder();
+        if (err != OK) {
+            return err;
+        }
+    }
+
+    if (mAudioTrack != NULL && mAudioSource == NULL) {
+        status_t err = initAudioDecoder();
+        if (err != OK) {
+            return err;
+        }
+    }
+
+    mIsFirstFrameAfterResume = true;
+
+    if (!mQueueStarted) {
+        mQueue.start();
+        mQueueStarted = true;
+    }
+
+    return OK;
+}
+
+#ifdef QCOM_DIRECTTRACK
+bool AwesomePlayer::inSupportedTunnelFormats(const char * mime) {
+    const char * tunnelFormats [ ] = {
+        MEDIA_MIMETYPE_AUDIO_MPEG,
+        MEDIA_MIMETYPE_AUDIO_AAC,
+    #ifdef TUNNEL_MODE_SUPPORTS_AMRWB
+        MEDIA_MIMETYPE_AUDIO_AMR_WB,
+    #ifdef ENABLE_AV_ENHANCEMENTS
+        MEDIA_MIMETYPE_AUDIO_AMR_WB_PLUS
+    #endif
+    #endif
+
+    };
+
+    if (!mime) {
+        return false;
+    }
+
+    size_t len = sizeof(tunnelFormats)/sizeof(const char *);
+    for (size_t i = 0; i < len; i++) {
+        const char * tf = tunnelFormats[i];
+        if (!strncasecmp(mime, tf, strlen(tf))) {
+            if (strlen(mime) == strlen(tf)) { //to prevent a substring match
+                ALOGD("Tunnel playback supported for %s", tf);
+                return true;
+            }
+        }
+    }
+
+    ALOGW("Tunnel playback unsupported for %s", mime);
+    return false;
+}
+
+void AwesomePlayer::checkTunnelExceptions()
+{
+    /* exception 1: No streaming */
+    if (isStreamingHTTP()) {
+        ALOGV("Streaming, force disable tunnel mode playback");
+        mIsTunnelAudio = false;
+        return;
+    }
+
+    CHECK(mAudioTrack != NULL);
+
+    /*
+     * exception 2: No AAC-LD content,
+     * hint given by setting kKeyTunnelException in the track meta
+     */
+    int32_t exception = 0;
+    if (mAudioTrack->getFormat()->findInt32(kKeyTunnelException, &exception) &&
+        exception) {
+        ALOGV("kKeyTunnelException set, disable tunnel mode");
+        mIsTunnelAudio = false;
+        return;
+    }
+
+    /* exception 3: use tunnel player only for AUDIO_STREAM_MUSIC */
+
+    if (mAudioSink->streamType() != AUDIO_STREAM_MUSIC ) {
+        ALOGD("Use tunnel player only for AUDIO_STREAM_MUSIC");
+        mIsTunnelAudio = false;
+        return;
+    }
+    /* below exceptions are only for av content */
+    if (mVideoTrack == NULL) return;
+
+    /* exception 4: No avi having video + mp3 */
+    if (mExtractor == NULL) return;
+
+    sp<MetaData> metaData = mExtractor->getMetaData();
+    const char * container;
+
+    /*only proceed for avi content.*/
+    if (!metaData->findCString(kKeyMIMEType, &container) ||
+        strcmp(container, MEDIA_MIMETYPE_CONTAINER_AVI)) {
+        return;
+    }
+
+    CHECK(mAudioTrack != NULL);
+
+    const char * mime;
+    metaData = mAudioTrack->getFormat();
+    /*disable for av content having mp3*/
+    if (metaData->findCString(kKeyMIMEType, &mime) &&
+        !strcmp(mime, MEDIA_MIMETYPE_AUDIO_MPEG)) {
+        ALOGV("Clip has AVI extractor and mp3 content, disable tunnel mode");
+        mIsTunnelAudio = false;
+        return;
+    }
+
+    return;
+}
+#endif
 
 }  // namespace android

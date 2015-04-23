@@ -12,6 +12,43 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * This file was modified by Dolby Laboratories, Inc. The portions of the
+ * code that are surrounded by "DOLBY..." are copyrighted and
+ * licensed separately, as follows:
+ *
+ *  (C) 2011-2015 Dolby Laboratories, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ **
+ ** This file was modified by DTS, Inc. The portions of the
+ ** code that are surrounded by "DTS..." are copyrighted and
+ ** licensed separately, as follows:
+ **
+ **  (C) 2014 DTS, Inc.
+ **
+ ** Licensed under the Apache License, Version 2.0 (the "License");
+ ** you may not use this file except in compliance with the License.
+ ** You may obtain a copy of the License at
+ **
+ **    http://www.apache.org/licenses/LICENSE-2.0
+ **
+ ** Unless required by applicable law or agreed to in writing, software
+ ** distributed under the License is distributed on an "AS IS" BASIS,
+ ** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ ** See the License for the specific language governing permissions and
+ ** limitations under the License
  */
 
 //#define LOG_NDEBUG 0
@@ -39,10 +76,19 @@
 #include <media/stagefright/MediaSource.h>
 #include <media/stagefright/MetaData.h>
 #include <utils/String8.h>
+#ifdef ENABLE_AV_ENHANCEMENTS
+#include <QCMediaDefs.h>
+#endif
 
 #include <byteswap.h>
 #include "include/ID3.h"
+#include "include/ExtendedUtils.h"
 
+#if defined(DOLBY_UDC) && defined(DEBUG_LOG_DDP_DECODER_EXTRA)
+#define DLOGD ALOGD
+#else
+#define DLOGD
+#endif // DOLBY_END
 namespace android {
 
 class MPEG4Source : public MediaSource {
@@ -198,6 +244,9 @@ MPEG4DataSource::MPEG4DataSource(const sp<DataSource> &source)
       mCachedOffset(0),
       mCachedSize(0),
       mCache(NULL) {
+#ifdef DOLBY_UDC
+      DLOGD("@DDP MPEG4DataSource::MPEG4DataSource");
+#endif // DOLBY_END
 }
 
 MPEG4DataSource::~MPEG4DataSource() {
@@ -265,6 +314,8 @@ status_t MPEG4DataSource::setCachedRange(off64_t offset, size_t size) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+static const bool kUseHexDump = false;
+
 static void hexdump(const void *_data, size_t size) {
     const uint8_t *data = (const uint8_t *)_data;
     size_t offset = 0;
@@ -305,17 +356,47 @@ static void hexdump(const void *_data, size_t size) {
 }
 
 static const char *FourCC2MIME(uint32_t fourcc) {
+#ifdef DOLBY_UDC
+    DLOGD("@DDP FourCC2MIME");
+#endif // DOLBY_END
     switch (fourcc) {
         case FOURCC('m', 'p', '4', 'a'):
             return MEDIA_MIMETYPE_AUDIO_AAC;
+
+        case FOURCC('e', 'n', 'c', 'a'):
+            return MEDIA_MIMETYPE_AUDIO_AAC;
+
+        case FOURCC('.', 'm', 'p', '3'):
+            return MEDIA_MIMETYPE_AUDIO_MPEG;
 
         case FOURCC('s', 'a', 'm', 'r'):
             return MEDIA_MIMETYPE_AUDIO_AMR_NB;
 
         case FOURCC('s', 'a', 'w', 'b'):
             return MEDIA_MIMETYPE_AUDIO_AMR_WB;
+#ifdef DTS_CODEC_M_
+        case FOURCC('d', 't', 's', 'c'):
+            return MEDIA_MIMETYPE_AUDIO_DTS;
+
+        case FOURCC('d', 't', 's', 'h'):
+            return MEDIA_MIMETYPE_AUDIO_DTS;
+
+        case FOURCC('d', 't', 's', 'l'):
+            return MEDIA_MIMETYPE_AUDIO_DTS;
+
+        case FOURCC('d', 't', 's', 'e'):
+            return MEDIA_MIMETYPE_AUDIO_DTS;
+#endif
+        case FOURCC('a', 'c', '-', '3'):
+            return MEDIA_MIMETYPE_AUDIO_AC3;
+
+        case FOURCC('e', 'c', '-', '3'):
+            return MEDIA_MIMETYPE_AUDIO_EAC3;
 
         case FOURCC('m', 'p', '4', 'v'):
+            return MEDIA_MIMETYPE_VIDEO_MPEG4;
+
+        case FOURCC('e', 'n', 'c', 'v'):
             return MEDIA_MIMETYPE_VIDEO_MPEG4;
 
         case FOURCC('s', '2', '6', '3'):
@@ -329,7 +410,27 @@ static const char *FourCC2MIME(uint32_t fourcc) {
         case FOURCC('h', 'v', 'c', '1'):
         case FOURCC('h', 'e', 'v', '1'):
             return MEDIA_MIMETYPE_VIDEO_HEVC;
+
+#ifdef ENABLE_AV_ENHANCEMENTS
+        case FOURCC('s', 'q', 'c', 'p'):
+            return MEDIA_MIMETYPE_AUDIO_QCELP;
+
+        case FOURCC('s', 'e', 'v', 'c'):
+            return MEDIA_MIMETYPE_AUDIO_EVRC;
+
+        case FOURCC('d', 't', 's', 'c'):
+        case FOURCC('d', 't', 's', 'h'):
+        case FOURCC('d', 't', 's', 'l'):
+            return MEDIA_MIMETYPE_AUDIO_DTS;
+
+        case FOURCC('d', 't', 's', 'e'):
+            return MEDIA_MIMETYPE_AUDIO_DTS_LBR;
+#endif
+
         default:
+#ifdef DOLBY_UDC
+            ALOGD("@DDP FourCC2Mime default (not found)");
+#endif // DOLBY_END
             CHECK(!"should not be here.");
             return NULL;
     }
@@ -361,6 +462,9 @@ MPEG4Extractor::MPEG4Extractor(const sp<DataSource> &source)
       mFileMetaData(new MetaData),
       mFirstSINF(NULL),
       mIsDrm(false) {
+#ifdef DOLBY_UDC
+      DLOGD("@DDP MPEG4Extractor::MPEG4Extractor");
+#endif // DOLBY_END
 }
 
 MPEG4Extractor::~MPEG4Extractor() {
@@ -607,7 +711,6 @@ status_t MPEG4Extractor::parseDrmSINF(
     if (size < 0) {
         return ERROR_IO;
     }
-    int32_t classSize = size;
     data_offset += numOfBytes;
 
     while(size >= 11 ) {
@@ -668,7 +771,6 @@ status_t MPEG4Extractor::parseDrmSINF(
     if (size < 0) {
         return ERROR_IO;
     }
-    classSize = size;
     data_offset += numOfBytes;
 
     while (size > 0) {
@@ -806,23 +908,23 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
     MakeFourCCString(chunk_type, chunk);
     ALOGV("chunk: %s @ %lld, %d", chunk, *offset, depth);
 
-#if 0
-    static const char kWhitespace[] = "                                        ";
-    const char *indent = &kWhitespace[sizeof(kWhitespace) - 1 - 2 * depth];
-    printf("%sfound chunk '%s' of size %" PRIu64 "\n", indent, chunk, chunk_size);
+    if (kUseHexDump) {
+        static const char kWhitespace[] = "                                        ";
+        const char *indent = &kWhitespace[sizeof(kWhitespace) - 1 - 2 * depth];
+        printf("%sfound chunk '%s' of size %" PRIu64 "\n", indent, chunk, chunk_size);
 
-    char buffer[256];
-    size_t n = chunk_size;
-    if (n > sizeof(buffer)) {
-        n = sizeof(buffer);
-    }
-    if (mDataSource->readAt(*offset, buffer, n)
-            < (ssize_t)n) {
-        return ERROR_IO;
-    }
+        char buffer[256];
+        size_t n = chunk_size;
+        if (n > sizeof(buffer)) {
+            n = sizeof(buffer);
+        }
+        if (mDataSource->readAt(*offset, buffer, n)
+                < (ssize_t)n) {
+            return ERROR_IO;
+        }
 
-    hexdump(buffer, n);
-#endif
+        hexdump(buffer, n);
+    }
 
     PathAdder autoAdder(&mPath, chunk_type);
 
@@ -1287,8 +1389,19 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
 
         case FOURCC('m', 'p', '4', 'a'):
         case FOURCC('e', 'n', 'c', 'a'):
+        case FOURCC('.', 'm', 'p', '3'):
         case FOURCC('s', 'a', 'm', 'r'):
         case FOURCC('s', 'a', 'w', 'b'):
+        case FOURCC('s', 'e', 'v', 'c'):
+        case FOURCC('s', 'q', 'c', 'p'):
+#ifdef DTS_CODEC_M_
+        case FOURCC('d', 't', 's', 'c'):
+        case FOURCC('d', 't', 's', 'h'):
+        case FOURCC('d', 't', 's', 'l'):
+        case FOURCC('d', 't', 's', 'e'):
+#endif
+        case FOURCC('a', 'c', '-', '3'):
+        case FOURCC('e', 'c', '-', '3'):
         {
             uint8_t buffer[8 + 20];
             if (chunk_data_size < (ssize_t)sizeof(buffer)) {
@@ -1301,7 +1414,7 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
                 return ERROR_IO;
             }
 
-            uint16_t data_ref_index = U16_AT(&buffer[6]);
+            uint16_t data_ref_index __unused = U16_AT(&buffer[6]);
             uint32_t num_channels = U16_AT(&buffer[16]);
 
             uint16_t sample_size = U16_AT(&buffer[18]);
@@ -1309,16 +1422,38 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
 
             if (chunk_type != FOURCC('e', 'n', 'c', 'a')) {
                 // if the chunk type is enca, we'll get the type from the sinf/frma box later
+#ifdef DOLBY_UDC
+                const char *mime;
+                CHECK(mLastTrack->meta->findCString(kKeyMIMEType, &mime));
+                //Track mime-type should have been set at 'trak'
+                //Only set the mimetype here to the chunk type if it hasn't changed
+                //Eg. EC3SpecificBox may already have set it to a more appropriate value
+                if (!strcmp(mime, "application/octet-stream")) {
+                    DLOGD("@DDP Set mimetype from %s to %s", mime, FourCC2MIME(chunk_type));
+#endif // DOLBY_END
                 mLastTrack->meta->setCString(kKeyMIMEType, FourCC2MIME(chunk_type));
+#ifdef DOLBY_UDC
+                }
+#endif // DOLBY_END
                 AdjustChannelsAndRate(chunk_type, &num_channels, &sample_rate);
             }
+#ifdef DOLBY_UDC
+            DLOGD("@DDP FourCC:'%s'", FourCC2MIME(chunk_type));
+#endif // DOLBY_END
             ALOGV("*** coding='%s' %d channels, size %d, rate %d\n",
                    chunk, num_channels, sample_size, sample_rate);
             mLastTrack->meta->setInt32(kKeyChannelCount, num_channels);
             mLastTrack->meta->setInt32(kKeySampleRate, sample_rate);
 
             off64_t stop_offset = *offset + chunk_size;
-            *offset = data_offset + sizeof(buffer);
+            if (!strcasecmp(MEDIA_MIMETYPE_AUDIO_MPEG, FourCC2MIME(chunk_type)) ||
+                !strcasecmp(MEDIA_MIMETYPE_AUDIO_AMR_WB, FourCC2MIME(chunk_type))) {
+                // ESD is not required in mp3
+                // amr wb with damr atom corrupted can cause the clip to not play
+               *offset = stop_offset;
+            } else {
+               *offset = data_offset + sizeof(buffer);
+            }
             while (*offset < stop_offset) {
                 status_t err = parseChunk(offset, depth + 1);
                 if (err != OK) {
@@ -1331,6 +1466,65 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
             }
             break;
         }
+
+#ifdef DOLBY_UDC
+        case FOURCC('d', 'e', 'c', '3'):
+        {
+            //Only allowed on E-AC3 tracks
+            if (!(mPath.size() >= 2 && (
+                    mPath[mPath.size() - 2] == FOURCC('e', 'c', '-', '3')))) {
+                return ERROR_MALFORMED;
+            }
+
+            //Minimum EC3SpecificBox Length
+            if (chunk_data_size < 5) {
+                return ERROR_MALFORMED;
+            }
+
+            //JOC Extensions allow EC3SpecificBox to be boundless in size
+            //Impose a realistic limit of 256 bytes
+            uint8_t buffer[256];
+            if (chunk_data_size > (off64_t)sizeof(buffer)) {
+                return ERROR_BUFFER_TOO_SMALL;
+            }
+
+            if (mDataSource->readAt(
+                    data_offset, buffer, chunk_data_size) < chunk_data_size) {
+                return ERROR_IO;
+            }
+            DLOGD("@DDP - Valid EC3SpecificBox detected");
+
+            uint8_t data_offset = 1;
+            uint8_t num_ind_sub = (buffer[data_offset] & 0x7) + 1; //0 = One I substream
+            DLOGD("@DDP - EC3SpecificBox reports num_ind_sub = %d", num_ind_sub);
+
+            for (uint8_t i = 0; i < num_ind_sub; i++) {
+                data_offset+=3;
+                uint8_t num_dep_sub = (buffer[data_offset] >> 1) & 0xF;
+                DLOGD("@DDP - I%d : num_dep_sub = %d", i, num_dep_sub);
+                if (num_dep_sub > 0) {
+                    data_offset++; //chan_loc byte
+                }
+            }
+
+            if (chunk_data_size - (data_offset + 1) >= 2) {
+                //JOC requires at least 2 bytes extension data
+                data_offset++;
+                if (buffer[data_offset] & 0x1) {
+                    mLastTrack->meta->setCString(
+                            kKeyMIMEType, MEDIA_MIMETYPE_AUDIO_EAC3_JOC);
+                    DLOGD("@DDP - flag_eac3_extension_type_a = 1 - Set EAC3/JOC mimetype");
+                }
+            }
+            else if (chunk_data_size > (data_offset +1)){
+                ALOGE("@DDP - Invalid EC3SpecificBox extension data");
+                return ERROR_MALFORMED;
+            }
+
+            *offset += chunk_size;
+            break;
+        }
+#endif // DOLBY_END
 
         case FOURCC('m', 'p', '4', 'v'):
         case FOURCC('e', 'n', 'c', 'v'):
@@ -1354,7 +1548,7 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
                 return ERROR_IO;
             }
 
-            uint16_t data_ref_index = U16_AT(&buffer[6]);
+            uint16_t data_ref_index __unused = U16_AT(&buffer[6]);
             uint16_t width = U16_AT(&buffer[6 + 18]);
             uint16_t height = U16_AT(&buffer[6 + 20]);
 
@@ -1544,13 +1738,13 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
             break;
         }
 
-        // @xyz
-        case FOURCC('\xA9', 'x', 'y', 'z'):
+        // ©xyz
+        case FOURCC(0xA9, 'x', 'y', 'z'):
         {
             *offset += chunk_size;
 
-            // Best case the total data length inside "@xyz" box
-            // would be 8, for instance "@xyz" + "\x00\x04\x15\xc7" + "0+0/",
+            // Best case the total data length inside "©xyz" box
+            // would be 8, for instance "©xyz" + "\x00\x04\x15\xc7" + "0+0/",
             // where "\x00\x04" is the text string length with value = 4,
             // "\0x15\xc7" is the language code = en, and "0+0" is a
             // location (string) value with longitude = 0 and latitude = 0.
@@ -1621,6 +1815,20 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
                 }
             }
 
+            ExtendedUtils::updateVideoTrackInfoFromESDS_MPEG4Video(mLastTrack->meta);
+
+            break;
+        }
+
+        case FOURCC('d', 'd', 't', 's'):
+        case FOURCC('d', 'a', 'c', '3'):
+#ifndef DOLBY_UDC
+        case FOURCC('d', 'e', 'c', '3'):
+#endif
+        {
+            //no information need to be passed here, just log and end
+            ALOGV("ddts/dac3/dec3 pass from mpeg4 extractor");
+            *offset += chunk_size;
             break;
         }
 
@@ -1878,7 +2086,6 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
             if (chunk_data_size < 24) {
                 return ERROR_IO;
             }
-            uint32_t duration;
             Trex trex;
             if (!mDataSource->getUInt32(data_offset + 4, &trex.track_ID) ||
                 !mDataSource->getUInt32(data_offset + 8, &trex.default_sample_description_index) ||
@@ -2150,7 +2357,7 @@ status_t MPEG4Extractor::parseTrackHeader(
         return ERROR_IO;
     }
 
-    uint64_t ctime, mtime, duration;
+    uint64_t ctime __unused, mtime __unused, duration __unused;
     int32_t id;
 
     if (version == 1) {
@@ -2172,12 +2379,13 @@ status_t MPEG4Extractor::parseTrackHeader(
     size_t matrixOffset = dynSize + 16;
     int32_t a00 = U32_AT(&buffer[matrixOffset]);
     int32_t a01 = U32_AT(&buffer[matrixOffset + 4]);
-    int32_t dx = U32_AT(&buffer[matrixOffset + 8]);
     int32_t a10 = U32_AT(&buffer[matrixOffset + 12]);
     int32_t a11 = U32_AT(&buffer[matrixOffset + 16]);
-    int32_t dy = U32_AT(&buffer[matrixOffset + 20]);
 
 #if 0
+    int32_t dx = U32_AT(&buffer[matrixOffset + 8]);
+    int32_t dy = U32_AT(&buffer[matrixOffset + 20]);
+
     ALOGI("x' = %.2f * x + %.2f * y + %.2f",
          a00 / 65536.0f, a01 / 65536.0f, dx / 65536.0f);
     ALOGI("y' = %.2f * x + %.2f * y + %.2f",
@@ -2708,18 +2916,25 @@ status_t MPEG4Extractor::updateAudioTrackInfoFromESDS_MPEG4Audio(
         return ERROR_MALFORMED;
     }
 
+#ifdef ENABLE_AV_ENHANCEMENTS
+    if (objectTypeIndication == 0xA0) {
+        // This isn't MPEG4 audio at all, it's EVRC
+       mLastTrack->meta->setCString(kKeyMIMEType, MEDIA_MIMETYPE_AUDIO_EVRC);
+       return OK;
+    }
+#endif
     if (objectTypeIndication == 0xe1) {
         // This isn't MPEG4 audio at all, it's QCELP 14k...
         mLastTrack->meta->setCString(kKeyMIMEType, MEDIA_MIMETYPE_AUDIO_QCELP);
         return OK;
     }
 
-    if (objectTypeIndication  == 0x6b) {
-        // The media subtype is MP3 audio
-        // Our software MP3 audio decoder may not be able to handle
-        // packetized MP3 audio; for now, lets just return ERROR_UNSUPPORTED
-        ALOGE("MP3 track in MP4/3GPP file is not supported");
-        return ERROR_UNSUPPORTED;
+    if (objectTypeIndication  == 0x6b
+         || objectTypeIndication  == 0x69) {
+         // This is mpeg1/2 audio content, set mimetype to mpeg
+         mLastTrack->meta->setCString(kKeyMIMEType, MEDIA_MIMETYPE_AUDIO_MPEG);
+         ALOGD("objectTypeIndication:0x%x, set mimetype to mpeg ",objectTypeIndication);
+         return OK;
     }
 
     const uint8_t *csd;
@@ -2729,10 +2944,10 @@ status_t MPEG4Extractor::updateAudioTrackInfoFromESDS_MPEG4Audio(
         return ERROR_MALFORMED;
     }
 
-#if 0
-    printf("ESD of size %d\n", csd_size);
-    hexdump(csd, csd_size);
-#endif
+    if (kUseHexDump) {
+        printf("ESD of size %d\n", csd_size);
+        hexdump(csd, csd_size);
+    }
 
     if (csd_size == 0) {
         // There's no further information, i.e. no codec specific data
@@ -2783,7 +2998,7 @@ status_t MPEG4Extractor::updateAudioTrackInfoFromESDS_MPEG4Audio(
 
     if (objectType == AOT_SBR || objectType == AOT_PS) {//SBR specific config per 14496-3 table 1.13
         uint32_t extFreqIndex = br.getBits(4);
-        int32_t extSampleRate;
+        int32_t extSampleRate __unused;
         if (extFreqIndex == 15) {
             if (csd_size < 8) {
                 return ERROR_MALFORMED;
@@ -2833,12 +3048,12 @@ status_t MPEG4Extractor::updateAudioTrackInfoFromESDS_MPEG4Audio(
         if (objectType == AOT_AAC_LC || objectType == AOT_ER_AAC_LC ||
                 objectType == AOT_ER_AAC_LD || objectType == AOT_ER_AAC_SCAL ||
                 objectType == AOT_ER_BSAC) {
-            const int32_t frameLengthFlag = br.getBits(1);
+            const int32_t frameLengthFlag __unused = br.getBits(1);
 
             const int32_t dependsOnCoreCoder = br.getBits(1);
 
             if (dependsOnCoreCoder ) {
-                const int32_t coreCoderDelay = br.getBits(14);
+                const int32_t coreCoderDelay __unused = br.getBits(14);
             }
 
             int32_t extensionFlag = -1;
@@ -2864,57 +3079,57 @@ status_t MPEG4Extractor::updateAudioTrackInfoFromESDS_MPEG4Audio(
                         extensionFlag, objectType);
             }
 
-            if (numChannels == 0) {
+            if (numChannels == 0 && (br.numBitsLeft() > 0)) {
                 int32_t channelsEffectiveNum = 0;
                 int32_t channelsNum = 0;
-                const int32_t ElementInstanceTag = br.getBits(4);
-                const int32_t Profile = br.getBits(2);
-                const int32_t SamplingFrequencyIndex = br.getBits(4);
+                const int32_t ElementInstanceTag __unused = br.getBits(4);
+                const int32_t Profile __unused = br.getBits(2);
+                const int32_t SamplingFrequencyIndex __unused = br.getBits(4);
                 const int32_t NumFrontChannelElements = br.getBits(4);
                 const int32_t NumSideChannelElements = br.getBits(4);
                 const int32_t NumBackChannelElements = br.getBits(4);
                 const int32_t NumLfeChannelElements = br.getBits(2);
-                const int32_t NumAssocDataElements = br.getBits(3);
-                const int32_t NumValidCcElements = br.getBits(4);
+                const int32_t NumAssocDataElements __unused = br.getBits(3);
+                const int32_t NumValidCcElements __unused = br.getBits(4);
 
                 const int32_t MonoMixdownPresent = br.getBits(1);
                 if (MonoMixdownPresent != 0) {
-                    const int32_t MonoMixdownElementNumber = br.getBits(4);
+                    const int32_t MonoMixdownElementNumber __unused = br.getBits(4);
                 }
 
                 const int32_t StereoMixdownPresent = br.getBits(1);
                 if (StereoMixdownPresent != 0) {
-                    const int32_t StereoMixdownElementNumber = br.getBits(4);
+                    const int32_t StereoMixdownElementNumber __unused = br.getBits(4);
                 }
 
                 const int32_t MatrixMixdownIndexPresent = br.getBits(1);
                 if (MatrixMixdownIndexPresent != 0) {
-                    const int32_t MatrixMixdownIndex = br.getBits(2);
-                    const int32_t PseudoSurroundEnable = br.getBits(1);
+                    const int32_t MatrixMixdownIndex __unused = br.getBits(2);
+                    const int32_t PseudoSurroundEnable __unused = br.getBits(1);
                 }
 
                 int i;
                 for (i=0; i < NumFrontChannelElements; i++) {
                     const int32_t FrontElementIsCpe = br.getBits(1);
-                    const int32_t FrontElementTagSelect = br.getBits(4);
+                    const int32_t FrontElementTagSelect __unused = br.getBits(4);
                     channelsNum += FrontElementIsCpe ? 2 : 1;
                 }
 
                 for (i=0; i < NumSideChannelElements; i++) {
                     const int32_t SideElementIsCpe = br.getBits(1);
-                    const int32_t SideElementTagSelect = br.getBits(4);
+                    const int32_t SideElementTagSelect __unused = br.getBits(4);
                     channelsNum += SideElementIsCpe ? 2 : 1;
                 }
 
                 for (i=0; i < NumBackChannelElements; i++) {
                     const int32_t BackElementIsCpe = br.getBits(1);
-                    const int32_t BackElementTagSelect = br.getBits(4);
+                    const int32_t BackElementTagSelect __unused = br.getBits(4);
                     channelsNum += BackElementIsCpe ? 2 : 1;
                 }
                 channelsEffectiveNum = channelsNum;
 
                 for (i=0; i < NumLfeChannelElements; i++) {
-                    const int32_t LfeElementTagSelect = br.getBits(4);
+                    const int32_t LfeElementTagSelect __unused = br.getBits(4);
                     channelsNum += 1;
                 }
                 ALOGV("mpeg4 audio channelsNum = %d", channelsNum);
@@ -2986,6 +3201,9 @@ MPEG4Source::MPEG4Source(
       mBuffer(NULL),
       mWantsNALFragments(false),
       mSrcBuffer(NULL) {
+#ifdef DOLBY_UDC
+      DLOGD("@DDP MPEG4Source::MPEG4Source");
+#endif // DOLBY_END
 
     memset(&mTrackFragmentHeaderInfo, 0, sizeof(mTrackFragmentHeaderInfo));
 
@@ -4247,7 +4465,9 @@ static bool LegacySniffMPEG4(
         return false;
     }
 
-    if (!memcmp(header, "ftyp3gp", 7) || !memcmp(header, "ftypmp42", 8)
+    if (!memcmp(header, "ftyp3g2a", 8) || !memcmp(header, "ftyp3g2b", 8)
+        || !memcmp(header, "ftyp3g2c", 8)
+        || !memcmp(header, "ftyp3gp", 7) || !memcmp(header, "ftypmp42", 8)
         || !memcmp(header, "ftyp3gr6", 8) || !memcmp(header, "ftyp3gs6", 8)
         || !memcmp(header, "ftyp3ge6", 8) || !memcmp(header, "ftyp3gg6", 8)
         || !memcmp(header, "ftypisom", 8) || !memcmp(header, "ftypM4V ", 8)

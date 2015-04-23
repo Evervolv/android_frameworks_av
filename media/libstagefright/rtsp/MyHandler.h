@@ -46,6 +46,7 @@
 #include <netdb.h>
 
 #include "HTTPBase.h"
+#include "ExtendedUtils.h"
 
 #if LOG_NDEBUG
 #define UNUSED_UNLESS_VERBOSE(x) (void)(x)
@@ -175,6 +176,7 @@ struct MyHandler : public AHandler {
 
         mSessionHost = host;
         mAUTimeoutCheck = true;
+        mIPVersion = IPV4;
     }
 
     void connect() {
@@ -417,7 +419,6 @@ struct MyHandler : public AHandler {
                 ALOGE("failed to poke a hole for RTCP packets");
                 continue;
             }
-
             ALOGI("successfully poked holes for the address = %u", s_addrs[i]);
         }
 
@@ -462,6 +463,7 @@ struct MyHandler : public AHandler {
             case 'conn':
             {
                 int32_t result;
+                int ipver;
                 CHECK(msg->findInt32("result", &result));
 
                 ALOGI("connection request completed with result %d (%s)",
@@ -469,6 +471,10 @@ struct MyHandler : public AHandler {
 
                 if (result == OK) {
                     AString request;
+                    CHECK(msg->findInt32("ipversion", &ipver));
+                    mIPVersion = ipver;
+                    ALOGI("ipversion:==> %d", ipver);
+                    mRTPConn->setIPVersion(mIPVersion);
                     request = "DESCRIBE ";
                     request.append(mSessionURL);
                     request.append(" RTSP/1.0\r\n");
@@ -734,13 +740,23 @@ struct MyHandler : public AHandler {
                             if (!track->mUsingInterleavedTCP) {
                                 AString transport = response->mHeaders.valueAt(i);
 
-                                // We are going to continue even if we were
-                                // unable to poke a hole into the firewall...
+                            // We are going to continue even if we were
+                            // unable to poke a hole into the firewall...
+                            if (mIPVersion == IPV4) {
                                 pokeAHole(
                                         track->mRTPSocket,
                                         track->mRTCPSocket,
                                         transport);
+                            } else if (mIPVersion == IPV6) {
+                                ExtendedUtils::RTSPStream::pokeAHole_V6(
+                                        track->mRTPSocket,
+                                        track->mRTCPSocket,
+                                        transport,
+                                        mSessionHost);
+
                             }
+
+                        }
 
                             mRTPConn->addStream(
                                     track->mRTPSocket, track->mRTCPSocket,
@@ -1419,6 +1435,10 @@ struct MyHandler : public AHandler {
         }
     }
 
+    int64_t getServerTimeoutUs() {
+        return mKeepAliveTimeoutUs;
+    }
+
     void postKeepAlive() {
         sp<AMessage> msg = new AMessage('aliv', id());
         msg->setInt32("generation", mKeepAliveGeneration);
@@ -1613,6 +1633,7 @@ private:
 
     bool mPlayResponseParsed;
     bool mAUTimeoutCheck;
+    int mIPVersion;
 
     void setupTrack(size_t index) {
         sp<APacketSource> source =
@@ -1679,8 +1700,13 @@ private:
             request.append(interleaveIndex + 1);
         } else {
             unsigned rtpPort;
-            ARTPConnection::MakePortPair(
+            if (mIPVersion == IPV4) {
+                ARTPConnection::MakePortPair(
                     &info->mRTPSocket, &info->mRTCPSocket, &rtpPort);
+            } else if (mIPVersion == IPV6) {
+                ExtendedUtils::RTSPStream::MakePortPair_V6(
+                    &info->mRTPSocket, &info->mRTCPSocket, &rtpPort);
+            }
 
             if (mUIDValid) {
                 HTTPBase::RegisterSocketUserTag(info->mRTPSocket, mUID,

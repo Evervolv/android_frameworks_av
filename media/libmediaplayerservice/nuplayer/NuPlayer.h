@@ -19,8 +19,16 @@
 #define NU_PLAYER_H_
 
 #include <media/MediaPlayerInterface.h>
+#include <media/stagefright/ExtendedStats.h>
 #include <media/stagefright/foundation/AHandler.h>
 #include <media/stagefright/NativeWindowWrapper.h>
+
+#define PLAYER_STATS(func, ...) \
+    do { \
+        if(mPlayerExtendedStats != NULL) { \
+            mPlayerExtendedStats->func(__VA_ARGS__);} \
+    } \
+    while(0)
 
 namespace android {
 
@@ -70,6 +78,7 @@ struct NuPlayer : public AHandler {
     void getStats(int64_t *mNumFramesTotal, int64_t *mNumFramesDropped);
 
     sp<MetaData> getFileMeta();
+    int64_t getServerTimeoutUs();
 
 protected:
     virtual ~NuPlayer();
@@ -120,6 +129,7 @@ private:
         kWhatGetSelectedTrack           = 'gSel',
         kWhatSelectTrack                = 'selT',
     };
+    sp<PlayerExtendedStats> mPlayerExtendedStats;
 
     wp<NuPlayerDriver> mDriver;
     bool mUIDValid;
@@ -130,7 +140,12 @@ private:
     sp<MediaPlayerBase::AudioSink> mAudioSink;
     sp<DecoderBase> mVideoDecoder;
     bool mOffloadAudio;
+
+    bool mOffloadDecodedPCM;
+    bool mSwitchingFromPcmOffload;
+    bool mIsStreaming;
     sp<DecoderBase> mAudioDecoder;
+
     sp<CCDecoder> mCCDecoder;
     sp<Renderer> mRenderer;
     sp<ALooper> mRendererLooper;
@@ -176,6 +191,9 @@ private:
     int32_t mVideoScalingMode;
 
     bool mStarted;
+    bool mBuffering;
+    bool mPlaying;
+    bool mSeeking;
 
     // Actual pause state, either as requested by client or due to buffering.
     bool mPaused;
@@ -184,6 +202,8 @@ private:
     // true, mPaused is always true; if mPausedByClient is false, mPaused could
     // still become true, when we pause internally due to buffering.
     bool mPausedByClient;
+
+    bool mOffloadAudioTornDown;
 
     inline const sp<DecoderBase> &getDecoder(bool audio) {
         return audio ? mAudioDecoder : mVideoDecoder;

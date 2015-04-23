@@ -44,6 +44,7 @@ struct AudioSource : public MediaSource, public MediaBufferObserver {
     virtual status_t start(MetaData *params = NULL);
     virtual status_t stop() { return reset(); }
     virtual sp<MetaData> getFormat();
+    status_t pause();
 
     // Returns the maximum amplitude since last call.
     int16_t getMaxAmplitude();
@@ -52,6 +53,7 @@ struct AudioSource : public MediaSource, public MediaBufferObserver {
             MediaBuffer **buffer, const ReadOptions *options = NULL);
 
     status_t dataCallback(const AudioRecord::Buffer& buffer);
+    virtual void onEvent(int event, void* info);
     virtual void signalBufferReturned(MediaBuffer *buffer);
 
 protected:
@@ -59,7 +61,9 @@ protected:
 
 private:
     enum {
-        kMaxBufferSize = 2048,
+        //This max buffer size is derived from aggregation of audio
+        //buffers for max duration 80 msec with 48K sampling rate.
+        kMaxBufferSize = 30720,
 
         // After the initial mute, we raise the volume linearly
         // over kAutoRampDurationUs.
@@ -74,9 +78,15 @@ private:
     Condition mFrameAvailableCondition;
     Condition mFrameEncodingCompletionCondition;
 
+    AudioRecord::Buffer mTempBuf;
+    uint32_t mPrevPosition;
+    uint32_t mAllocBytes;
+    int32_t mAudioSessionId;
+    AudioRecord::transfer_type mTransferMode;
     sp<AudioRecord> mRecord;
     status_t mInitCheck;
     bool mStarted;
+    bool mRecPaused;
     int32_t mSampleRate;
 
     bool mTrackMaxAmplitude;
@@ -89,7 +99,6 @@ private:
     int64_t mAutoRampStartUs;
 
     List<MediaBuffer * > mBuffersReceived;
-
     void trackMaxAmplitude(int16_t *data, int nSamples);
 
     // This is used to raise the volume from mute to the

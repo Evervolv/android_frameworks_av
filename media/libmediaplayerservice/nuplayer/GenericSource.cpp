@@ -38,6 +38,7 @@
 #include "../../libstagefright/include/WVMExtractor.h"
 #include "../../libstagefright/include/HTTPBase.h"
 
+#include <ExtendedUtils.h>
 namespace android {
 
 static int64_t kLowWaterMarkUs = 2000000ll;  // 2secs
@@ -130,23 +131,37 @@ sp<MetaData> NuPlayer::GenericSource::getFileFormatMeta() const {
 
 status_t NuPlayer::GenericSource::initFromDataSource() {
     sp<MediaExtractor> extractor;
+    String8 mimeType;
+    float confidence;
+    sp<AMessage> dummy;
+    bool isWidevineStreaming = false;
 
     CHECK(mDataSource != NULL);
 
     if (mIsWidevine) {
-        String8 mimeType;
-        float confidence;
-        sp<AMessage> dummy;
-        bool success;
-
-        success = SniffWVM(mDataSource, &mimeType, &confidence, &dummy);
-        if (!success
-                || strcasecmp(
+        isWidevineStreaming = SniffWVM(
+                mDataSource, &mimeType, &confidence, &dummy);
+        if (!isWidevineStreaming ||
+                strcasecmp(
                     mimeType.string(), MEDIA_MIMETYPE_CONTAINER_WVM)) {
             ALOGE("unsupported widevine mime: %s", mimeType.string());
             return UNKNOWN_ERROR;
         }
+    } else if (mIsStreaming) {
+        if (mSniffedMIME.empty()) {
+            if (!mDataSource->sniff(&mimeType, &confidence, &dummy)) {
+                return UNKNOWN_ERROR;
+            }
+            mSniffedMIME = mimeType.string();
+        }
+        isWidevineStreaming = !strcasecmp(
+                mSniffedMIME.c_str(), MEDIA_MIMETYPE_CONTAINER_WVM);
+    }
 
+    if (isWidevineStreaming) {
+        // we don't want cached source for widevine streaming.
+        mCachedSource.clear();
+        mDataSource = mHttpSource;
         mWVMExtractor = new WVMExtractor(mDataSource);
         mWVMExtractor->setAdaptiveStreamingMode(true);
         if (mUIDValid) {
@@ -181,14 +196,6 @@ status_t NuPlayer::GenericSource::initFromDataSource() {
             if (mFileMeta->findCString(kKeyMIMEType, &fileMime)
                     && !strncasecmp(fileMime, "video/wvm", 9)) {
                 mIsWidevine = true;
-                if (!mUri.empty()) {
-                  // streaming, but the app forgot to specify widevine:// url
-                  mWVMExtractor = static_cast<WVMExtractor *>(extractor.get());
-                  mWVMExtractor->setAdaptiveStreamingMode(true);
-                  if (mUIDValid) {
-                    mWVMExtractor->setUID(mUID);
-                  }
-                }
             }
         }
     }
@@ -272,9 +279,30 @@ status_t NuPlayer::GenericSource::startSources() {
     // Widevine sources might re-initialize crypto when starting, if we delay
     // this to start(), all data buffered during prepare would be wasted.
     // (We don't actually start reading until start().)
-    if (mAudioTrack.mSource != NULL && mAudioTrack.mSource->start() != OK) {
-        ALOGE("failed to start audio track!");
-        return UNKNOWN_ERROR;
+    if (mAudioTrack.mSource != NULL) {
+        bool overrideSourceStart = false;
+        status_t status = false;
+        sp<MetaData> audioMeta = NULL;
+        audioMeta = mAudioTrack.mSource->getFormat();
+
+        if (ExtendedUtils::is24bitPCMOffloadEnabled()) {
+            if(ExtendedUtils::is24bitPCMOffloaded(audioMeta)) {
+                overrideSourceStart = true;
+            }
+        }
+
+        if (overrideSourceStart && audioMeta.get()) {
+            ALOGV("Override AudioTrack source with Meta");
+            status = mAudioTrack.mSource->start(audioMeta.get());
+        } else {
+            ALOGV("Do not override AudioTrack source with Meta");
+            status = mAudioTrack.mSource->start();
+        }
+
+        if (status != OK ) {
+            ALOGE("failed to start audio track!");
+            return UNKNOWN_ERROR;
+        }
     }
 
     if (mVideoTrack.mSource != NULL && mVideoTrack.mSource->start() != OK) {
@@ -687,10 +715,10 @@ void NuPlayer::GenericSource::sendCacheStats() {
     int32_t kbps = 0;
     status_t err = UNKNOWN_ERROR;
 
-    if (mCachedSource != NULL) {
-        err = mCachedSource->getEstimatedBandwidthKbps(&kbps);
-    } else if (mWVMExtractor != NULL) {
+    if (mWVMExtractor != NULL) {
         err = mWVMExtractor->getEstimatedBandwidthKbps(&kbps);
+    } else if (mCachedSource != NULL) {
+        err = mCachedSource->getEstimatedBandwidthKbps(&kbps);
     }
 
     if (err == OK) {
@@ -712,7 +740,13 @@ void NuPlayer::GenericSource::onPollBuffering() {
     int64_t cachedDurationUs = -1ll;
     ssize_t cachedDataRemaining = -1;
 
-    if (mCachedSource != NULL) {
+    ALOGW_IF(mWVMExtractor != NULL && mCachedSource != NULL,
+            "WVMExtractor and NuCachedSource both present");
+
+    if (mWVMExtractor != NULL) {
+        cachedDurationUs =
+                mWVMExtractor->getCachedDurationUs(&finalStatus);
+    } else if (mCachedSource != NULL) {
         cachedDataRemaining =
                 mCachedSource->approxDataRemaining(&finalStatus);
 
@@ -728,9 +762,6 @@ void NuPlayer::GenericSource::onPollBuffering() {
                 cachedDurationUs = cachedDataRemaining * 8000000ll / bitrate;
             }
         }
-    } else if (mWVMExtractor != NULL) {
-        cachedDurationUs
-            = mWVMExtractor->getCachedDurationUs(&finalStatus);
     }
 
     if (finalStatus != OK) {
@@ -1504,13 +1535,13 @@ void NuPlayer::GenericSource::readBuffer(
     switch (trackType) {
         case MEDIA_TRACK_TYPE_VIDEO:
             track = &mVideoTrack;
-            if (mIsWidevine) {
+            if (mIsWidevine || (mHttpSource != NULL)) {
                 maxBuffers = 2;
             }
             break;
         case MEDIA_TRACK_TYPE_AUDIO:
             track = &mAudioTrack;
-            if (mIsWidevine) {
+            if (mIsWidevine || (mHttpSource != NULL)) {
                 maxBuffers = 8;
             } else {
                 maxBuffers = 64;
@@ -1574,8 +1605,8 @@ void NuPlayer::GenericSource::readBuffer(
                 track->mPackets->queueDiscontinuity( type, NULL, true /* discard */);
             }
 
-            sp<ABuffer> buffer = mediaBufferToABuffer(
-                    mbuf, trackType, seekTimeUs, actualTimeUs);
+            sp<ABuffer> buffer = mediaBufferToABuffer(mbuf, trackType, seekTimeUs,
+                numBuffers == 0 ? actualTimeUs : NULL);
             track->mPackets->queueAccessUnit(buffer);
             formatChange = false;
             seeking = false;
