@@ -511,54 +511,6 @@ status_t AudioTrack::set(
 
     }
 
-    if ((mStreamType == AUDIO_STREAM_VOICE_CALL) &&
-        (mChannelCount == 1) &&
-        (mSampleRate == 8000 || mSampleRate == 16000)) {
-        // Allow Voip direct output only if:
-        // audio mode is MODE_IN_COMMUNCATION; AND
-        // voip output is not opened already; AND
-        // requested sample rate matches with that of voip input stream (if opened already)
-        int value = 0;
-        uint32_t mode = 0, voipOutCount = 1, voipSampleRate = 1;
-        String8 valueStr = AudioSystem::getParameters((audio_io_handle_t)0, String8("audio_mode"));
-        AudioParameter result = AudioParameter(valueStr);
-        if (result.getInt(String8("audio_mode"), value) == NO_ERROR) {
-            mode = value;
-        }
-
-        valueStr = AudioSystem::getParameters((audio_io_handle_t)0,
-                                              String8("voip_out_stream_count"));
-        result = AudioParameter(valueStr);
-        if (result.getInt(String8("voip_out_stream_count"), value) == NO_ERROR) {
-            voipOutCount = value;
-        }
-
-        valueStr = AudioSystem::getParameters((audio_io_handle_t)0,
-                                              String8("voip_sample_rate"));
-        result = AudioParameter(valueStr);
-        if (result.getInt(String8("voip_sample_rate"), value) == NO_ERROR) {
-            voipSampleRate = value;
-        }
-
-        if ((mode == AUDIO_MODE_IN_COMMUNICATION) && (voipOutCount == 0) &&
-            ((voipSampleRate == 0) || (voipSampleRate == mSampleRate))) {
-            if (audio_is_linear_pcm(format)) {
-                char propValue[PROPERTY_VALUE_MAX] = {0};
-                property_get("use.voice.path.for.pcm.voip", propValue, "0");
-                bool voipPcmSysPropEnabled = !strncmp("true", propValue, sizeof("true"));
-                if (voipPcmSysPropEnabled) {
-                    flags = (audio_output_flags_t)((flags &~AUDIO_OUTPUT_FLAG_FAST) |
-                                AUDIO_OUTPUT_FLAG_VOIP_RX | AUDIO_OUTPUT_FLAG_DIRECT);
-                    ALOGD("Set VoIP and Direct output flags for PCM format");
-                }
-            } else {
-                flags = (audio_output_flags_t)((flags &~AUDIO_OUTPUT_FLAG_FAST) |
-                            AUDIO_OUTPUT_FLAG_VOIP_RX | AUDIO_OUTPUT_FLAG_DIRECT);
-                ALOGD("Set VoIP and Direct output flags for Non-PCM formats");
-            }
-        }
-    }
-
     if (flags & AUDIO_OUTPUT_FLAG_DIRECT) {
         if (audio_is_linear_pcm(format)) {
             mFrameSize = channelCount * audio_bytes_per_sample(format);
