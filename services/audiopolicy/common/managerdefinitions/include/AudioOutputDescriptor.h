@@ -309,6 +309,7 @@ public:
 
     DeviceVector mDevices; /**< current devices this output is routed to */
     wp<AudioPolicyMix> mPolicyMix;  // non NULL when used by a dynamic policy
+    audio_io_handle_t mIoHandle;           // output handle
 
     virtual uint32_t getRecommendedMuteDurationMs() const { return 0; }
 
@@ -441,7 +442,6 @@ public:
     void setTracksInvalidatedStatusByStrategy(product_strategy_t strategy);
 
     const sp<IOProfile> mProfile;          // I/O profile this output derives from
-    audio_io_handle_t mIoHandle;           // output handle
     uint32_t mLatency;                  //
     using AudioOutputDescriptor::mFlags;
     sp<SwAudioOutputDescriptor> mOutput1;    // used by duplicated outputs: first output
