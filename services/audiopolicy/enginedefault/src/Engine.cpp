@@ -273,6 +273,10 @@ DeviceVector Engine::getDevicesForStrategyInt(legacy_strategy strategy,
                                           getLastRemovableMediaDevices());
         if (!devices.isEmpty()) break;
         devices = availableOutputDevices.getDevicesFromType(AUDIO_DEVICE_OUT_EARPIECE);
+        if (getDpConnAndAllowedForVoice() && isInCall()) {
+        devices = availableOutputDevices.getDevicesFromType(AUDIO_DEVICE_OUT_AUX_DIGITAL);
+        if (!devices.isEmpty()) break;
+        }
     } break;
 
     case STRATEGY_SONIFICATION:
@@ -318,6 +322,16 @@ DeviceVector Engine::getDevicesForStrategyInt(legacy_strategy strategy,
                     devices.add(devices2);
                     break;
                 }
+            }
+        }
+        // if display-port is connected and being used in voice usecase,
+        // play ringtone over speaker and display-port
+        if ((strategy == STRATEGY_SONIFICATION) && getDpConnAndAllowedForVoice()) {
+            DeviceVector devices2 = availableOutputDevices.getDevicesFromType(
+                    AUDIO_DEVICE_OUT_AUX_DIGITAL);
+            if (!devices2.isEmpty()) {
+                devices.add(devices2);
+                break;
             }
         }
         // The second device used for sonification is the same as the device used by media strategy
