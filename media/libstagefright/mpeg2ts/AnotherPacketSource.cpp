@@ -286,15 +286,6 @@ void AnotherPacketSource::queueDiscontinuity(
     mCondition.signal();
 }
 
-void AnotherPacketSource::eraseBuffer() {
-    Mutex::Autolock autoLock(mLock);
-    List<sp<ABuffer> >::iterator it = mBuffers.begin();
-    it++;
-    while (it != mBuffers.end()) {
-        it = mBuffers.erase(it);
-    }
-}
-
 void AnotherPacketSource::signalEOS(status_t result) {
     CHECK(result != OK);
 
@@ -393,6 +384,14 @@ int64_t AnotherPacketSource::getEstimatedDurationUs() {
         diffUs = startTimeUs - endTimeUs;
     }
     return diffUs;
+}
+
+size_t AnotherPacketSource::getBufferCount(status_t *finalResult) {
+    Mutex::Autolock autoLock(mLock);
+
+    *finalResult = mEOSResult;
+
+    return mBuffers.size();
 }
 
 status_t AnotherPacketSource::nextBufferTime(int64_t *timeUs) {

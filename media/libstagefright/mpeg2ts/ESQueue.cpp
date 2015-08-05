@@ -47,9 +47,6 @@
 #include <media/stagefright/MediaDefs.h>
 #include <media/stagefright/MetaData.h>
 #include <media/stagefright/Utils.h>
-#ifdef ENABLE_AV_ENHANCEMENTS
-#include <QCMetaData.h>
-#endif
 
 #include "include/avc_utils.h"
 #include "include/ExtendedUtils.h"
@@ -61,7 +58,8 @@ namespace android {
 
 ElementaryStreamQueue::ElementaryStreamQueue(Mode mode, uint32_t flags)
     : mMode(mode),
-      mFlags(flags) {
+      mFlags(flags),
+      mEOSReached(false) {
 }
 
 sp<MetaData> ElementaryStreamQueue::getFormat() {
@@ -275,6 +273,11 @@ static bool IsSeeminglyValidDDPAudioHeader(const uint8_t *ptr, size_t size) {
 #endif // DOLBY_END
 status_t ElementaryStreamQueue::appendData(
         const void *data, size_t size, int64_t timeUs) {
+
+    if (mEOSReached) {
+        ALOGE("appending data after EOS");
+        return ERROR_MALFORMED;
+    }
     if (mBuffer == NULL || mBuffer->size() == 0) {
         switch (mMode) {
             case H264:
@@ -289,8 +292,8 @@ status_t ElementaryStreamQueue::appendData(
                 uint8_t *ptr = (uint8_t *)data;
 
                 ssize_t startOffset = -1;
-                for (size_t i = 0; i + 3 < size; ++i) {
-                    if (!memcmp("\x00\x00\x00\x01", &ptr[i], 4)) {
+                for (size_t i = 0; i + 2 < size; ++i) {
+                    if (!memcmp("\x00\x00\x01", &ptr[i], 3)) {
                         startOffset = i;
                         break;
                     }
@@ -539,13 +542,6 @@ sp<ABuffer> ElementaryStreamQueue::dequeueAccessUnit() {
                 mFormat = MakeAVCCodecSpecificData(accessUnit);
             } else if (mMode == H265) {
                 mFormat = ExtendedUtils::MakeHEVCCodecSpecificData(accessUnit);
-#ifdef ENABLE_AV_ENHANCEMENTS
-                if (mFormat != NULL) {
-                    // Unlike H264, we do not require HEVC data to be aligned.
-                    // To handle this, let the decoder do the frame parsing.
-                    mFormat->setInt32(kKeyUseArbitraryMode, 1);
-                }
-#endif
             }
         }
 
@@ -1462,5 +1458,18 @@ sp<ABuffer> ElementaryStreamQueue::dequeueAccessUnitMPEG4Video() {
 
     return NULL;
 }
+
+void ElementaryStreamQueue::signalEOS() {
+    if (!mEOSReached) {
+        if (mMode == MPEG_VIDEO) {
+            const char *theEnd = "\x00\x00\x01\x00";
+            appendData(theEnd, 4, 0);
+        }
+        mEOSReached = true;
+    } else {
+        ALOGW("EOS already signaled");
+    }
+}
+
 
 }  // namespace android

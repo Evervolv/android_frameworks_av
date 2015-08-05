@@ -169,8 +169,6 @@ struct ExtendedUtils {
         static void getRtpPortRange(unsigned *start, unsigned *end);
 
         static bool isVideoRenderingDisabled();
-
-        static bool isCustomHLSEnabled();
     };
 
     struct RTSPStream {
@@ -220,6 +218,7 @@ struct ExtendedUtils {
 
     static bool is24bitPCMOffloadEnabled();
     static bool is16bitPCMOffloadEnabled();
+    static bool isTrackOffloadEnabled();
     static bool isRAWFormat(const sp<MetaData> &meta);
     static bool isRAWFormat(const sp<AMessage> &format);
     static int32_t getPcmSampleBits(const sp<MetaData> &meta);

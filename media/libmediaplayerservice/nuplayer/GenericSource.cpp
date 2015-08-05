@@ -131,37 +131,23 @@ sp<MetaData> NuPlayer::GenericSource::getFileFormatMeta() const {
 
 status_t NuPlayer::GenericSource::initFromDataSource() {
     sp<MediaExtractor> extractor;
-    String8 mimeType;
-    float confidence;
-    sp<AMessage> dummy;
-    bool isWidevineStreaming = false;
 
     CHECK(mDataSource != NULL);
 
     if (mIsWidevine) {
-        isWidevineStreaming = SniffWVM(
-                mDataSource, &mimeType, &confidence, &dummy);
-        if (!isWidevineStreaming ||
-                strcasecmp(
+        String8 mimeType;
+        float confidence;
+        sp<AMessage> dummy;
+        bool success;
+
+        success = SniffWVM(mDataSource, &mimeType, &confidence, &dummy);
+        if (!success
+                || strcasecmp(
                     mimeType.string(), MEDIA_MIMETYPE_CONTAINER_WVM)) {
             ALOGE("unsupported widevine mime: %s", mimeType.string());
             return UNKNOWN_ERROR;
         }
-    } else if (mIsStreaming) {
-        if (mSniffedMIME.empty()) {
-            if (!mDataSource->sniff(&mimeType, &confidence, &dummy)) {
-                return UNKNOWN_ERROR;
-            }
-            mSniffedMIME = mimeType.string();
-        }
-        isWidevineStreaming = !strcasecmp(
-                mSniffedMIME.c_str(), MEDIA_MIMETYPE_CONTAINER_WVM);
-    }
 
-    if (isWidevineStreaming) {
-        // we don't want cached source for widevine streaming.
-        mCachedSource.clear();
-        mDataSource = mHttpSource;
         mWVMExtractor = new WVMExtractor(mDataSource);
         mWVMExtractor->setAdaptiveStreamingMode(true);
         if (mUIDValid) {
@@ -196,6 +182,14 @@ status_t NuPlayer::GenericSource::initFromDataSource() {
             if (mFileMeta->findCString(kKeyMIMEType, &fileMime)
                     && !strncasecmp(fileMime, "video/wvm", 9)) {
                 mIsWidevine = true;
+                if (!mUri.empty()) {
+                  // streaming, but the app forgot to specify widevine:// url
+                  mWVMExtractor = static_cast<WVMExtractor *>(extractor.get());
+                  mWVMExtractor->setAdaptiveStreamingMode(true);
+                  if (mUIDValid) {
+                    mWVMExtractor->setUID(mUID);
+                  }
+                }
             }
         }
     }
@@ -646,7 +640,7 @@ status_t NuPlayer::GenericSource::feedMoreTSData() {
 void NuPlayer::GenericSource::schedulePollBuffering() {
     sp<AMessage> msg = new AMessage(kWhatPollBuffering, id());
     msg->setInt32("generation", mPollBufferingGeneration);
-    msg->post(1000000ll);
+    msg->post((mBuffering || mPrepareBuffering) ? 100000ll : 1000000ll);
 }
 
 void NuPlayer::GenericSource::cancelPollBuffering() {
@@ -715,10 +709,10 @@ void NuPlayer::GenericSource::sendCacheStats() {
     int32_t kbps = 0;
     status_t err = UNKNOWN_ERROR;
 
-    if (mWVMExtractor != NULL) {
-        err = mWVMExtractor->getEstimatedBandwidthKbps(&kbps);
-    } else if (mCachedSource != NULL) {
+    if (mCachedSource != NULL) {
         err = mCachedSource->getEstimatedBandwidthKbps(&kbps);
+    } else if (mWVMExtractor != NULL) {
+        err = mWVMExtractor->getEstimatedBandwidthKbps(&kbps);
     }
 
     if (err == OK) {
@@ -740,13 +734,7 @@ void NuPlayer::GenericSource::onPollBuffering() {
     int64_t cachedDurationUs = -1ll;
     ssize_t cachedDataRemaining = -1;
 
-    ALOGW_IF(mWVMExtractor != NULL && mCachedSource != NULL,
-            "WVMExtractor and NuCachedSource both present");
-
-    if (mWVMExtractor != NULL) {
-        cachedDurationUs =
-                mWVMExtractor->getCachedDurationUs(&finalStatus);
-    } else if (mCachedSource != NULL) {
+    if (mCachedSource != NULL) {
         cachedDataRemaining =
                 mCachedSource->approxDataRemaining(&finalStatus);
 
@@ -762,6 +750,9 @@ void NuPlayer::GenericSource::onPollBuffering() {
                 cachedDurationUs = cachedDataRemaining * 8000000ll / bitrate;
             }
         }
+    } else if (mWVMExtractor != NULL) {
+        cachedDurationUs
+            = mWVMExtractor->getCachedDurationUs(&finalStatus);
     }
 
     if (finalStatus != OK) {
@@ -1572,6 +1563,7 @@ void NuPlayer::GenericSource::readBuffer(
     if (seekTimeUs >= 0) {
         options.setSeekTo(seekTimeUs, MediaSource::ReadOptions::SEEK_PREVIOUS_SYNC);
         seeking = true;
+        track->mPackets->clear();
     }
 
     if (mIsWidevine) {
@@ -1611,6 +1603,10 @@ void NuPlayer::GenericSource::readBuffer(
             formatChange = false;
             seeking = false;
             ++numBuffers;
+
+            if (trackType == MEDIA_TRACK_TYPE_VIDEO) {
+                actualTimeUs = NULL;
+            }
         } else if (err == WOULD_BLOCK) {
             break;
         } else if (err == INFO_FORMAT_CHANGED) {

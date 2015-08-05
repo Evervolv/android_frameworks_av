@@ -59,6 +59,7 @@ struct NuPlayer : public AHandler {
             const sp<IGraphicBufferProducer> &bufferProducer);
 
     void setAudioSink(const sp<MediaPlayerBase::AudioSink> &sink);
+    void startAudioSink();
     void start();
 
     void pause();
@@ -104,6 +105,7 @@ private:
     struct SetSurfaceAction;
     struct ResumeDecoderAction;
     struct FlushDecoderAction;
+    struct InstantiateDecoderAction;
     struct PostMessageAction;
     struct SimpleAction;
 
@@ -191,9 +193,6 @@ private:
     int32_t mVideoScalingMode;
 
     bool mStarted;
-    bool mBuffering;
-    bool mPlaying;
-    bool mSeeking;
 
     // Actual pause state, either as requested by client or due to buffering.
     bool mPaused;
