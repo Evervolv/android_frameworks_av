@@ -351,6 +351,9 @@ static const char *FourCC2MIME(uint32_t fourcc) {
         case FOURCC('m', 'p', '4', 'a'):
             return MEDIA_MIMETYPE_AUDIO_AAC;
 
+        case FOURCC('.', 'm', 'p', '3'):
+            return MEDIA_MIMETYPE_AUDIO_MPEG;
+
         case FOURCC('s', 'a', 'm', 'r'):
             return MEDIA_MIMETYPE_AUDIO_AMR_NB;
 
@@ -1523,6 +1526,15 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
                    chunk, num_channels, sample_size, sample_rate);
             mLastTrack->meta->setInt32(kKeyChannelCount, num_channels);
             mLastTrack->meta->setInt32(kKeySampleRate, sample_rate);
+
+            if (!strcasecmp(MEDIA_MIMETYPE_AUDIO_MPEG, FourCC2MIME(chunk_type)) ||
+                !strcasecmp(MEDIA_MIMETYPE_AUDIO_AMR_WB, FourCC2MIME(chunk_type))) {
+                // ESD is not required in mp3
+                // amr wb with damr atom corrupted can cause the clip to not play
+               *offset = stop_offset;
+            } else {
+               *offset = data_offset + sizeof(buffer);
+            }
 
             while (*offset < stop_offset) {
                 status_t err = parseChunk(offset, depth + 1);
@@ -3422,12 +3434,12 @@ status_t MPEG4Extractor::updateAudioTrackInfoFromESDS_MPEG4Audio(
         return OK;
     }
 
-    if (objectTypeIndication  == 0x6b) {
-        // The media subtype is MP3 audio
-        // Our software MP3 audio decoder may not be able to handle
-        // packetized MP3 audio; for now, lets just return ERROR_UNSUPPORTED
-        ALOGE("MP3 track in MP4/3GPP file is not supported");
-        return ERROR_UNSUPPORTED;
+    if (objectTypeIndication  == 0x6b
+         || objectTypeIndication  == 0x69) {
+         // This is mpeg1/2 audio content, set mimetype to mpeg
+         mLastTrack->meta->setCString(kKeyMIMEType, MEDIA_MIMETYPE_AUDIO_MPEG);
+         ALOGD("objectTypeIndication:0x%x, set mimetype to mpeg ",objectTypeIndication);
+         return OK;
     }
 
     const uint8_t *csd;
@@ -5090,7 +5102,9 @@ static bool LegacySniffMPEG4(
         return false;
     }
 
-    if (!memcmp(header, "ftyp3gp", 7) || !memcmp(header, "ftypmp42", 8)
+    if (!memcmp(header, "ftyp3g2a", 8) || !memcmp(header, "ftyp3g2b", 8)
+        || !memcmp(header, "ftyp3g2c", 8)
+        || !memcmp(header, "ftyp3gp", 7) || !memcmp(header, "ftypmp42", 8)
         || !memcmp(header, "ftyp3gr6", 8) || !memcmp(header, "ftyp3gs6", 8)
         || !memcmp(header, "ftyp3ge6", 8) || !memcmp(header, "ftyp3gg6", 8)
         || !memcmp(header, "ftypisom", 8) || !memcmp(header, "ftypM4V ", 8)
