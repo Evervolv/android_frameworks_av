@@ -93,7 +93,6 @@ bool checkDPFromVOLHeader(const uint8_t *ptr, size_t size);
 bool checkDPFromCodecSpecificData(const uint8_t *ptr, size_t size);
 
 status_t copyNALUToABuffer(sp<ABuffer> *buffer, const uint8_t *ptr, size_t length);
-
 }  // namespace android
 
 #endif  // UTILS_H_

@@ -1280,6 +1280,5 @@ bool checkDPFromVOLHeader(const uint8_t *data, size_t size) {
     ALOGD("checkDPFromVOLHeader: DP:%u", dataPartitioned);
     return retVal;
 }
-
 }  // namespace android
 
