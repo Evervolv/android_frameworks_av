@@ -1890,7 +1890,7 @@ status_t NuPlayer::Renderer::onOpenAudioSink(
         const PcmInfo info = {
                 (audio_channel_mask_t)channelMask,
                 (audio_output_flags_t)pcmFlags,
-                getPCMFormat(format),
+                AVNuUtils::get()->getPCMFormat(format),
                 numChannels,
                 sampleRate
         };
