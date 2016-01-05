@@ -33,7 +33,6 @@
 #include <common/AVExtensionsCommon.h>
 #include <hardware/audio.h>
 #include <media/AudioTrack.h>
-#include <audio_utils/format.h>
 
 namespace android {
 
