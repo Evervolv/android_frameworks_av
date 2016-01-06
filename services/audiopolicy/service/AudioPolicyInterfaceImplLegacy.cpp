@@ -275,6 +275,11 @@ status_t AudioPolicyService::getInputForAttr(const audio_attributes_t *attr,
         return BAD_VALUE;
     }
 
+#ifdef HAVE_PRE_KITKAT_AUDIO_POLICY_BLOB
+    if (inputSource == AUDIO_SOURCE_HOTWORD)
+        inputSource = AUDIO_SOURCE_VOICE_RECOGNITION;
+#endif
+
     sp<AudioPolicyEffects>audioPolicyEffects;
     {
         Mutex::Autolock _l(mLock);
@@ -524,9 +529,9 @@ status_t AudioPolicyService::queryDefaultPreProcessing(int audioSession,
 
 bool AudioPolicyService::isOffloadSupported(const audio_offload_info_t& info)
 {
-#if HAVE_PRE_KITKAT_AUDIO_POLICY_BLOB
+#ifdef HAVE_PRE_KITKAT_AUDIO_POLICY_BLOB
     return false;
-#endif
+#else
     if (mpAudioPolicy == NULL) {
         ALOGV("mpAudioPolicy == NULL");
         return false;
@@ -538,6 +543,7 @@ bool AudioPolicyService::isOffloadSupported(const audio_offload_info_t& info)
     }
 
     return mpAudioPolicy->is_offload_supported(mpAudioPolicy, &info);
+#endif
 }
 
 status_t AudioPolicyService::listAudioPorts(audio_port_role_t role __unused,
