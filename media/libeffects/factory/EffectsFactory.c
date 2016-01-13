@@ -456,15 +456,13 @@ int init() {
     if (ignoreFxConfFiles) {
         ALOGI("Audio effects in configuration files will be ignored");
     } else {
-#ifndef IGNORE_VENDOR_AUDIO_EFFECTS_CONF
-        if (access(AUDIO_EFFECT_VENDOR_CONFIG_FILE, R_OK) == 0) {
+        if (access(AUDIO_EFFECT_VENDOR_CONFIG_FILE2, R_OK) == 0) {
+            loadEffectConfigFile(AUDIO_EFFECT_VENDOR_CONFIG_FILE2);
+        } else if (access(AUDIO_EFFECT_VENDOR_CONFIG_FILE, R_OK) == 0) {
             loadEffectConfigFile(AUDIO_EFFECT_VENDOR_CONFIG_FILE);
         } else if (access(AUDIO_EFFECT_DEFAULT_CONFIG_FILE, R_OK) == 0) {
-#endif
             loadEffectConfigFile(AUDIO_EFFECT_DEFAULT_CONFIG_FILE);
-#ifndef IGNORE_VENDOR_AUDIO_EFFECTS_CONF
         }
-#endif
     }
 
     updateNumEffects();
