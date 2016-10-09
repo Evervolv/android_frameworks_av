@@ -19,6 +19,7 @@
 #define LOG_TAG "GraphicBufferSource"
 //#define LOG_NDEBUG 0
 #include <utils/Log.h>
+#include <cutils/properties.h>
 
 #define STRINGIFY_ENUMS // for asString in HardwareAPI.h/VideoAPI.h
 
@@ -776,10 +777,13 @@ status_t GraphicBufferSource::submitBuffer_l(const VideoBuffer &item) {
         return UNKNOWN_ERROR;
     }
 
-    if ((android_dataspace)item.mDataspace != mLastDataspace) {
-        onDataspaceChanged_l(
-                item.mDataspace,
-                (android_pixel_format)item.mBuffer->getGraphicBuffer()->format);
+    bool supportSignal = property_get_bool("vendor.stagefright.legacy", false /* default_value */);
+    if (supportSignal) {
+        if ((android_dataspace)item.mDataspace != mLastDataspace) {
+            onDataspaceChanged_l(
+                    item.mDataspace,
+                    (android_pixel_format)item.mBuffer->getGraphicBuffer()->format);
+        }
     }
 
     std::shared_ptr<AcquiredBuffer> buffer = item.mBuffer;
