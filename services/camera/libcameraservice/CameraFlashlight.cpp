@@ -88,6 +88,9 @@ status_t CameraFlashlight::createFlashlightControl(const String8& cameraId) {
 
             mFlashControl = flashControl;
         } else {
+#ifdef NO_CAMERA_FLASH
+            return INVALID_OPERATION;
+#endif
             mFlashControl =
                     new CameraHardwareInterfaceFlashControl(*mCameraModule,
                                                             *mCallbacks);
