@@ -86,6 +86,9 @@ endif
 
 ifeq ($(TARGET_HAS_LEGACY_CAMERA_HAL1),true)
     LOCAL_CFLAGS += -DNO_CAMERA_SERVER
+    ifeq ($(TARGET_HAS_NO_CAMERA_FLASH),true)
+        LOCAL_CFLAGS += -DNO_CAMERA_FLASH
+    endif
 endif
 
 LOCAL_MODULE:= libcameraservice
