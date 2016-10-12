@@ -52,6 +52,14 @@ CameraFlashlight::~CameraFlashlight() {
 status_t CameraFlashlight::createFlashlightControl(const String8& cameraId) {
     ALOGV("%s: creating a flash light control for camera %s", __FUNCTION__,
             cameraId.string());
+#ifdef NO_CAMERA_SERVER
+    // Only HAL1 devices can disable flash support
+    bool mDisableFlashControl = property_get_bool("ro.camera.hal1.disable_flash", false);
+    if (mDisableFlashControl) {
+        return INVALID_OPERATION;
+    }
+#endif
+
     if (mFlashControl != NULL) {
         return INVALID_OPERATION;
     }
