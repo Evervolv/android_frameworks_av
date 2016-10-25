@@ -120,7 +120,6 @@ public:
 
 private:
     enum {
-        kMinCttsOffsetTimeUs = 500,
         kMaxCttsOffsetTimeUs = 1000000LL,  // 1 second
         kSampleArraySize = 1000,
     };
@@ -300,7 +299,6 @@ private:
 
     int64_t mMinCttsOffsetTimeUs;
     int64_t mMaxCttsOffsetTimeUs;
-    int64_t mCttsOffsetTimeUs;
 
     // Sequence parameter set or picture parameter set
     struct AVCParamSet {
@@ -1559,7 +1557,6 @@ MPEG4Writer::Track::Track(
       mStssTableEntries(new ListTableEntries<uint32_t, 1>(1000)),
       mSttsTableEntries(new ListTableEntries<uint32_t, 2>(1000)),
       mCttsTableEntries(new ListTableEntries<uint32_t, 2>(1000)),
-      mCttsOffsetTimeUs(0),
       mCodecSpecificData(NULL),
       mCodecSpecificDataSize(0),
       mGotAllCodecSpecificData(false),
@@ -2454,12 +2451,6 @@ status_t MPEG4Writer::Track::threadEntry() {
                 }
             }
 
-            if (!mIsAudio) {
-                int32_t fps;
-                mMeta->findInt32(kKeyFrameRate, &fps);
-                int64_t cttsOffsetTimeUs = 1000000LL/fps;
-                mCttsOffsetTimeUs = cttsOffsetTimeUs + kMinCttsOffsetTimeUs; //delta factor
-            }
             buffer->release();
             buffer = NULL;
 
@@ -2572,10 +2563,7 @@ status_t MPEG4Writer::Track::threadEntry() {
 
             mLastDecodingTimeUs = decodingTimeUs;
             cttsOffsetTimeUs =
-                    timestampUs + mCttsOffsetTimeUs - decodingTimeUs;
-            if (cttsOffsetTimeUs < 0) {
-                cttsOffsetTimeUs = 0;
-            }
+                    timestampUs + kMaxCttsOffsetTimeUs - decodingTimeUs;
             if (WARN_UNLESS(cttsOffsetTimeUs >= 0ll, "for %s track", trackName)) {
                 copy->release();
                 return ERROR_MALFORMED;
@@ -2594,10 +2582,12 @@ status_t MPEG4Writer::Track::threadEntry() {
             }
 
             if (mStszTableEntries->count() == 0) {
+                // Force the first ctts table entry to have one single entry
+                // so that we can do adjustment for the initial track start
+                // time offset easily in writeCttsBox().
                 lastCttsOffsetTimeTicks = currCttsOffsetTimeTicks;
-                //addOneCttsTableEntry(1, currCttsOffsetTimeTicks);
-                //cttsSampleCount = 0;      // No sample in ctts box is pending
-                cttsSampleCount = 1;
+                addOneCttsTableEntry(1, currCttsOffsetTimeTicks);
+                cttsSampleCount = 0;      // No sample in ctts box is pending
             } else {
                 if (currCttsOffsetTimeTicks != lastCttsOffsetTimeTicks) {
                     addOneCttsTableEntry(cttsSampleCount, lastCttsOffsetTimeTicks);
