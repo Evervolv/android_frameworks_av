@@ -79,6 +79,14 @@ cc_library_shared {
         "-Wno-documentation",
     ],
 
+    product_variables: {
+        evervolv: {
+            has_legacy_camera_hal1: {
+                cflags: ["-DCAMCORDER_GRALLOC_SOURCE"],
+            },
+        },
+    },
+
     sanitize: {
         misc_undefined: [
             "signed-integer-overflow",
