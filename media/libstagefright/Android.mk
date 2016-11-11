@@ -157,6 +157,10 @@ LOCAL_CFLAGS += -DQTI_FLAC_DECODER
 endif
 endif
 
+ifeq ($(TARGET_HAS_LEGACY_CAMERA_HAL1),true)
+LOCAL_CFLAGS += -DSKIP_SET_BUFFER_MODE
+endif
+
 LOCAL_CLANG := true
 LOCAL_SANITIZE := unsigned-integer-overflow signed-integer-overflow
 
