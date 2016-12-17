@@ -46,9 +46,10 @@
 #include <media/mediarecorder.h>
 #include <cutils/properties.h>
 
+#include "include/avc_utils.h"
 #include "include/ESDS.h"
 #include "include/HevcUtils.h"
-#include "include/avc_utils.h"
+
 #include <stagefright/AVExtensions.h>
 
 #ifndef __predict_false

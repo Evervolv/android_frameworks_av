@@ -1426,6 +1426,7 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
             if (mLastTrack == NULL)
                 return ERROR_MALFORMED;
 
+            off64_t stop_offset = *offset + chunk_size;
             *offset = data_offset + sizeof(buffer);
 
             if (mIsQT && chunk_type == FOURCC('m', 'p', '4', 'a')) {
@@ -1471,7 +1472,6 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
             mLastTrack->meta->setInt32(kKeyChannelCount, num_channels);
             mLastTrack->meta->setInt32(kKeySampleRate, sample_rate);
 
-            off64_t stop_offset = *offset + chunk_size;
             if (!strcasecmp(MEDIA_MIMETYPE_AUDIO_MPEG, FourCC2MIME(chunk_type)) ||
                 !strcasecmp(MEDIA_MIMETYPE_AUDIO_AMR_WB, FourCC2MIME(chunk_type))) {
                 // ESD is not required in mp3
@@ -1480,7 +1480,6 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
             } else {
                *offset = data_offset + sizeof(buffer);
             }
-
             while (*offset < stop_offset) {
                 status_t err = parseChunk(offset, depth + 1);
                 if (err != OK) {

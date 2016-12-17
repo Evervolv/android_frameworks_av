@@ -837,11 +837,11 @@ int64_t GraphicBufferSource::getTimestamp(const BufferItem &item) {
                 int64_t timestampGapUs = originalTimeUs - mPrevOriginalTimeUs;
                 timeUs = (timestampGapUs < mMaxTimestampGapUs ?
                     timestampGapUs : mMaxTimestampGapUs) + mPrevModifiedTimeUs;
-                mOriginalTimeUs.add(timeUs, originalTimeUs);
-                ALOGV("IN  timestamp: %lld -> %lld",
-                    static_cast<long long>(originalTimeUs),
-                    static_cast<long long>(timeUs));
             }
+            mOriginalTimeUs.add(timeUs, originalTimeUs);
+            ALOGV("IN  timestamp: %lld -> %lld",
+                static_cast<long long>(originalTimeUs),
+                static_cast<long long>(timeUs));
         }
 
         mPrevOriginalTimeUs = originalTimeUs;
@@ -940,6 +940,7 @@ int GraphicBufferSource::findMatchingCodecBuffer_l(
  * frameNum: frame number of the frame being released
  * buffer: GraphicBuffer pointer to release (note this must not be & as we
  *         will clear the original mBufferSlot in persistent case)
+ *         Use NOLINT to supress warning on the copy of 'buffer'.
  * fence: fence of the frame being released
  */
 void GraphicBufferSource::releaseBuffer(
