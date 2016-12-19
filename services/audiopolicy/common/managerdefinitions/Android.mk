@@ -86,7 +86,7 @@ LOCAL_EXPORT_C_INCLUDE_DIRS := \
 
 LOCAL_MULTILIB := $(AUDIOSERVER_MULTILIB)
 
-LOCAL_CFLAGS := -Wall -Werror
+LOCAL_CFLAGS += -Wall -Werror
 
 LOCAL_MODULE := libaudiopolicycomponents
 
