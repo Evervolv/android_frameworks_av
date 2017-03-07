@@ -1266,7 +1266,7 @@ status_t AudioFlinger::EffectHandle::disable()
 
     sp<ThreadBase> thread = effect->thread().promote();
     if (thread != 0) {
-        thread->checkSuspendOnEffectEnabled(effect, false, mEffect->sessionId());
+        thread->checkSuspendOnEffectEnabled(effect, false, effect->sessionId());
         if ((thread->type() == ThreadBase::OFFLOAD) ||
             (thread->type() == ThreadBase::DIRECT && thread->mIsDirectPcm)){
             PlaybackThread *t = (PlaybackThread *)thread.get();
