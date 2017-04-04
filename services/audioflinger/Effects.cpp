@@ -1378,7 +1378,6 @@ status_t AudioFlinger::EffectHandle::command(uint32_t cmdCode,
         // particular client process:  no risk to block the whole media server process or mixer
         // threads if we are stuck here
         Mutex::Autolock _l(mCblk->lock);
-
         // keep local copy of index in case of client corruption b/32220769
         const uint32_t clientIndex = mCblk->clientIndex;
         const uint32_t serverIndex = mCblk->serverIndex;
