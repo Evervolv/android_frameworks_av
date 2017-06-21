@@ -23,6 +23,8 @@
 #endif
 //#define LOG_NDEBUG 0
 
+#include <android-base/properties.h>
+#include <android-base/strings.h>
 #include <camera/CameraUtils.h>
 #include <camera/StringUtils.h>
 #include <camera/camera2/CaptureRequest.h>
@@ -95,9 +97,17 @@ CameraDeviceClient::CameraDeviceClient(
       mInputStream(),
       mStreamingRequestId(REQUEST_ID_NONE),
       mRequestIdCounter(0),
+      mPrivilegedClient(false),
       mOverrideForPerfClass(overrideForPerfClass),
       mOriginalCameraId(originalCameraId),
       mIsVendorClient(isVendorClient) {
+
+    std::vector<std::string> privilegedClientList = android::base::Split(
+            android::base::GetProperty("persist.vendor.camera.privapp.list", ""), ",");
+    auto it = std::find(privilegedClientList.begin(), privilegedClientList.end(),
+            getPackageName());
+    mPrivilegedClient = it != privilegedClientList.end();
+
     ATRACE_CALL();
     ALOGI("CameraDeviceClient %s: Opened", cameraId.c_str());
 }
@@ -1026,7 +1036,8 @@ binder::Status CameraDeviceClient::createStream(
 #endif
                 , mCameraIdStr,
                 mDevice->infoPhysical(physicalCameraId), sensorPixelModesUsed, dynamicRangeProfile,
-                streamUseCase, timestampBase, mirrorMode, colorSpace, /*respectSurfaceSize*/false);
+                streamUseCase, timestampBase, mirrorMode, colorSpace, /*respectSurfaceSize*/false,
+                mPrivilegedClient);
 
         if (!res.isOk())
             return res;
@@ -1421,7 +1432,7 @@ binder::Status CameraDeviceClient::updateOutputConfiguration(int streamId,
                 ,
                 mCameraIdStr, mDevice->infoPhysical(physicalCameraId), sensorPixelModesUsed,
                 dynamicRangeProfile, streamUseCase, timestampBase, mirrorMode, colorSpace,
-                /*respectSurfaceSize*/ false);
+                /*respectSurfaceSize*/ false, mPrivilegedClient);
         if (!res.isOk()) return res;
 
         streamInfos.push_back(outInfo);
@@ -1823,7 +1834,7 @@ binder::Status CameraDeviceClient::finalizeOutputConfigurations(int32_t streamId
 #endif
                 , mCameraIdStr, mDevice->infoPhysical(physicalId),
                 sensorPixelModesUsed, dynamicRangeProfile, streamUseCase, timestampBase, mirrorMode,
-                colorSpace, /*respectSurfaceSize*/ false);
+                colorSpace, /*respectSurfaceSize*/ false, mPrivilegedClient);
 
         if (!res.isOk()) return res;
 
