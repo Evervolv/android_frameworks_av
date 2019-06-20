@@ -155,6 +155,7 @@ cc_library_shared {
         "android.hardware.camera.device@3.6",
         "android.hardware.camera.device@3.7",
         "media_permission-aidl-cpp",
+        "vendor.evervolv.camera.motor@1.0",
     ],
 
     static_libs: [
