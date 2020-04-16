@@ -987,7 +987,8 @@ Status AudioPolicyService::startInput(int32_t portIdAidl)
             String16(msg.str().c_str()), client->attributes.source);
 
     // check calling permissions
-    if (permitted == PERMISSION_HARD_DENIED) {
+    if (!isAudioServerOrMediaServerUid(client->attributionSource.uid)
+            && (permitted == PERMISSION_HARD_DENIED)) {
         ALOGE("%s permission denied: recording not allowed for attribution source %s",
                 __func__, client->attributionSource.toString().c_str());
         return binderStatusFromStatusT(PERMISSION_DENIED);
