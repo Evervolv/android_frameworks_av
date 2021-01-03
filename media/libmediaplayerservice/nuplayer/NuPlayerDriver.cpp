@@ -553,6 +553,7 @@ void NuPlayerDriver::updateMetrics(const char *where) {
     // getDuration() uses mLock
     int duration_ms = -1;
     getDuration(&duration_ms);
+    mAnalyticsItem->setInt64(kPlayerDuration, duration_ms);
 
     mPlayer->updateInternalTimers();
 
@@ -574,15 +575,13 @@ void NuPlayerDriver::updateMetrics(const char *where) {
     // we also avoid any races within mAnalyticsItem machinery
     Mutex::Autolock autoLock(mMetricsLock);
 
-    mAnalyticsItem->setInt64(kPlayerDuration, duration_ms);
-
     mAnalyticsItem->setInt64(kPlayerPlaying, (playingTimeUs+500)/1000 );
 
     if (mRebufferingEvents != 0) {
         mAnalyticsItem->setInt64(kPlayerRebuffering, (rebufferingTimeUs+500)/1000 );
         mAnalyticsItem->setInt32(kPlayerRebufferingCount, rebufferingEvents);
         mAnalyticsItem->setInt32(kPlayerRebufferingAtExit, rebufferingAtExit);
-     }
+    }
 
     mAnalyticsItem->setCString(kPlayerDataSourceType, mPlayer->getDataSourceType());
 
