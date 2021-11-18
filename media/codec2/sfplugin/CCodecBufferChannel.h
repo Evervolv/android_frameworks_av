@@ -423,6 +423,7 @@ private:
 
     uint64_t mLastInputBufferAvailableTs;
     std::mutex mTsLock;
+    bool mIsHWDecoder;
 
     sp<ICrypto> mCrypto;
     sp<IDescrambler> mDescrambler;
