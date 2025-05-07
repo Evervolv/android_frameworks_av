@@ -1399,7 +1399,8 @@ status_t AudioSystem::getInputForAttr(const audio_attributes_t* attr,
                                       audio_config_base_t* config,
                                       audio_input_flags_t flags,
                                       audio_port_handle_t* selectedDeviceId,
-                                      audio_port_handle_t* portId) {
+                                      audio_port_handle_t* portId,
+                                      audio_source_t* source) {
     if (attr == NULL) {
         ALOGE("getInputForAttr NULL attr - shouldn't happen");
         return BAD_VALUE;
@@ -1447,7 +1448,7 @@ status_t AudioSystem::getInputForAttr(const audio_attributes_t* attr,
     *selectedDeviceId = VALUE_OR_RETURN_STATUS(
             aidl2legacy_int32_t_audio_port_handle_t(response.selectedDeviceId));
     *portId = VALUE_OR_RETURN_STATUS(aidl2legacy_int32_t_audio_port_handle_t(response.portId));
-
+    *source = VALUE_OR_RETURN_STATUS(aidl2legacy_AudioSource_audio_source_t(response.source));
     return OK;
 }
 

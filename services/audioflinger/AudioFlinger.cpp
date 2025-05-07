@@ -646,12 +646,15 @@ status_t AudioFlinger::openMmapStream(MmapStreamInterface::stream_direction_t di
                  "%s does not support secondary outputs, ignoring them", __func__);
     } else {
         audio_port_handle_t deviceId = getFirstDeviceId(*deviceIds);
+        audio_source_t source = AUDIO_SOURCE_DEFAULT;
         ret = AudioSystem::getInputForAttr(&localAttr, &io,
                                               RECORD_RIID_INVALID,
                                               actualSessionId,
                                               adjAttributionSource,
                                               config,
-                                              AUDIO_INPUT_FLAG_MMAP_NOIRQ, &deviceId, &portId);
+                                              AUDIO_INPUT_FLAG_MMAP_NOIRQ,
+                                              &deviceId, &portId, &source);
+        localAttr.source = source;
         deviceIds->clear();
         if (deviceId != AUDIO_PORT_HANDLE_NONE) {
             deviceIds->push_back(deviceId);
@@ -2534,17 +2537,19 @@ status_t AudioFlinger::createRecord(const media::CreateRecordRequest& _input,
         output.selectedDeviceId = input.selectedDeviceId;
         portId = AUDIO_PORT_HANDLE_NONE;
     }
+    audio_source_t source = AUDIO_SOURCE_DEFAULT;
     lStatus = AudioSystem::getInputForAttr(&input.attr, &output.inputId,
                                       input.riid,
                                       sessionId,
                                     // FIXME compare to AudioTrack
                                       adjAttributionSource,
                                       &input.config,
-                                      output.flags, &output.selectedDeviceId, &portId);
+                                      output.flags, &output.selectedDeviceId, &portId, &source);
     if (lStatus != NO_ERROR) {
         ALOGE("createRecord() getInputForAttr return error %d", lStatus);
         goto Exit;
     }
+    input.attr.source = source;
 
     {
         audio_utils::lock_guard _l(mutex());

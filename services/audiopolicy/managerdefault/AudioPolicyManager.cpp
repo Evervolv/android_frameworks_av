@@ -3147,6 +3147,7 @@ AudioPolicyManager::getInputForAttr(audio_attributes_t attributes,
     ret.portId = allocatedPortId;
     ret.virtualDeviceId = permReq.virtualDeviceId;
     ret.config = legacy2aidl_audio_config_base_t_AudioConfigBase(config, true /*isInput*/).value();
+    ret.source = legacy2aidl_audio_source_t_AudioSource(attributes.source).value();
     return ret;
 }
 

@@ -370,6 +370,7 @@ public:
      * @param[in|out] selectedDeviceId the requested device id for playback, the actual device id
      *                                 for playback will be returned
      * @param[out] portId the generated port id to identify the client
+     * @param[out] source the audio source validated by audio policy manager
      * @return if the call is successful or not
      */
     static status_t getInputForAttr(const audio_attributes_t *attr,
@@ -380,7 +381,8 @@ public:
                                     audio_config_base_t *config,
                                     audio_input_flags_t flags,
                                     audio_port_handle_t *selectedDeviceId,
-                                    audio_port_handle_t *portId);
+                                    audio_port_handle_t *portId,
+                                    audio_source_t *source);
 
     static status_t startInput(audio_port_handle_t portId);
     static status_t stopInput(audio_port_handle_t portId);

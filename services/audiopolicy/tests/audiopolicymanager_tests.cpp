@@ -1375,6 +1375,36 @@ TEST_F(AudioPolicyManagerTestWithConfigurationFile, MatchesMoreInputFlagsWhenPos
     EXPECT_EQ(expectedChannelMask, requestedChannelMask);
 }
 
+TEST_F(AudioPolicyManagerTestWithConfigurationFile, AudioSourceFixedByGetInputforAttr) {
+    const audio_port_handle_t requestedDeviceId = AUDIO_PORT_HANDLE_NONE;
+    const audio_io_handle_t requestedInput = AUDIO_PORT_HANDLE_NONE;
+    const AttributionSourceState attributionSource = createAttributionSourceState(/*uid=*/ 0);
+
+    audio_attributes_t attr = {AUDIO_CONTENT_TYPE_UNKNOWN, AUDIO_USAGE_UNKNOWN,
+                               AUDIO_SOURCE_DEFAULT, AUDIO_FLAG_NONE, ""};
+    audio_config_base_t requestedConfig = {
+            .sample_rate = k48000SamplingRate,
+            .channel_mask = AUDIO_CHANNEL_IN_STEREO,
+            .format = AUDIO_FORMAT_PCM_16_BIT,
+    };
+    auto inputRes = mManager->getInputForAttr(attr, requestedInput, requestedDeviceId,
+                                              requestedConfig, AUDIO_INPUT_FLAG_NONE, 1 /*riid*/,
+                                              AUDIO_SESSION_NONE, attributionSource);
+    ASSERT_TRUE(inputRes.has_value());
+    ASSERT_NE(VALUE_OR_FATAL(aidl2legacy_AudioSource_audio_source_t(inputRes.value().source)),
+                             AUDIO_SOURCE_DEFAULT);
+
+    attr = {AUDIO_CONTENT_TYPE_UNKNOWN, AUDIO_USAGE_UNKNOWN,
+            AUDIO_SOURCE_VOICE_COMMUNICATION, AUDIO_FLAG_NONE, ""};
+
+    inputRes = mManager->getInputForAttr(attr, requestedInput, requestedDeviceId, requestedConfig,
+                                         AUDIO_INPUT_FLAG_NONE, 1 /*riid*/, AUDIO_SESSION_NONE,
+                                         attributionSource);
+    ASSERT_TRUE(inputRes.has_value());
+    ASSERT_EQ(VALUE_OR_FATAL(aidl2legacy_AudioSource_audio_source_t(inputRes.value().source)),
+                             AUDIO_SOURCE_VOICE_COMMUNICATION);
+}
+
 class AudioPolicyManagerTestDynamicPolicy : public AudioPolicyManagerTestWithConfigurationFile {
 protected:
     void TearDown() override;
